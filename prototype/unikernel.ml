@@ -2,6 +2,10 @@ open V1_LWT
 open Lwt
 
 module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
+  (* it would be really nice to do a structured diff on pcaps, which you could
+    just feed a list of fields about which you cared whether they differed (or
+    maybe have a preset blacklist, actually; ip ids, ip/tx level checksums, mac
+    addresses, etc) *)
 
   (* thing to do is probably try to read the amount of data that we know is in a
     pcap file header to start off, 
@@ -9,8 +13,10 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
     try to read the amount of data that we know is in the header for each packet,
      and based on that, read the relevant amount of information and return it *)
   (* that's kind of what `packets` does, of course, but it would be really nice
-     to get it as an Lwt_stream instead of a Cstruct.iter . *)
-  (* heh, there's a really easy answer to that... *)
+     to get it as an Lwt_stream instead of a Cstruct.iter, and also not have to
+     pass the entire buffer at once -- I think that's what I was getting at with
+     this comment.  Since packets expects *not* to see the whole file-level
+     header, it should be possible to just keep getting new sequences until EOF *)
   let enqueue_packets packet_seq =
     let (queue, push) = Lwt_stream.create () in
     let () = Cstruct.fold (fun _ packet -> push (Some packet)) packet_seq () in
@@ -40,12 +46,8 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
       | Some reader ->
         let module R = (val reader : Pcap.HDR) in
         let pausing_reader l (packet_header, packet_body) =
-          (* endianness assumption -- not great *)
-          (* we don't actually need to do this in this hacky way; we can use the
-             reader given to us by Pcap.detect *)
           let packet_secs = R.get_pcap_packet_ts_sec packet_header in
           let packet_usecs = R.get_pcap_packet_ts_usec packet_header in
-          (* let's ignore usecs for now *)
           l >>= fun last_time ->
           let how_long = 
             match last_time with
