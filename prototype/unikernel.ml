@@ -1,12 +1,53 @@
 open V1_LWT
 open Lwt
 
-module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
-  (* it would be really nice to do a structured diff on pcaps, which you could
-    just feed a list of fields about which you cared whether they differed (or
-    maybe have a preset blacklist, actually; ip ids, ip/tx level checksums, mac
-    addresses, etc) *)
+module Reading_netif (K: KV_RO) : sig
+  include V1.NETWORK
+    with type 'a io = 'a Lwt.t
+     and type page_aligned_buffer = Cstruct.t
+     and type buffer = Cstruct.t
+     and type id = string
+     and type macaddr = string
 
+end = struct
+  type 'a io = 'a Lwt.t
+  type page_aligned_buffer = Cstruct.t
+  type buffer = Cstruct.t
+  type id = string
+  type macaddr = string
+
+  type error = [ `Unimplemented | `Disconnected | `Unknown of string ]
+
+  type stats = {
+    mutable rx_bytes : int64;
+    mutable rx_pkts : int32;
+    mutable tx_bytes : int64;
+    mutable tx_pkts : int32; 
+  }
+
+  type t = {
+    source : string; (* should really be something like an fd *) 
+    mutable seek : int; (* probably shouldn't actually limit size *)
+    stats : stats;
+  }
+
+  (* TODO: stats *)
+  let reset_stats_counters t = ()
+  let get_stats_counters t = t.stats
+
+  let id t = t.source 
+  let connect id = Lwt.return (`Error (`Unimplemented)) 
+  let disconnect _ = Lwt.return_unit
+
+  let write t buf = Lwt.return_unit
+  let writev t bufs = Lwt.return_unit
+
+  let listen t cb = Lwt.return_unit
+  let mac t = t.source
+
+end
+
+module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
   (* thing to do is probably try to read the amount of data that we know is in a
     pcap file header to start off, 
     then as we go on,
@@ -23,7 +64,7 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
     let () = push None in (* EOF *)
     queue
   (* What is this buying us?  The ability to make something more complicated
-    than what we can express in a `fold`, I guess.  And I think we do need that
+     than what we can express in a `fold`, I guess.  And I think we do need that
      for our pseudonetif. *)
 
   let start c k n =
