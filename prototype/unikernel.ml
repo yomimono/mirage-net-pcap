@@ -6,17 +6,17 @@ module Reading_netif (K: KV_RO) : sig
     with type 'a io = 'a Lwt.t
      and type page_aligned_buffer = Cstruct.t
      and type buffer = Cstruct.t
-     and type id = string
      and type macaddr = string
 
 end = struct
   type 'a io = 'a Lwt.t
   type page_aligned_buffer = Cstruct.t
   type buffer = Cstruct.t
-  type id = string
   type macaddr = string
 
-  type error = [ `Unimplemented | `Disconnected | `Unknown of string ]
+  type error = [ `Unimplemented 
+               | `Disconnected 
+               | `Unknown of string ]
 
   type stats = {
     mutable rx_bytes : int64;
@@ -25,25 +25,115 @@ end = struct
     mutable tx_pkts : int32; 
   }
 
-  type t = {
-    source : string; (* should really be something like an fd *) 
-    mutable seek : int; (* probably shouldn't actually limit size *)
-    stats : stats;
+  type id = {
+       source_device : K.t;
+       file : string; 
   }
 
-  (* TODO: stats *)
+  type t = {
+    source : id; (* should really be something like an fd *) 
+    seek : int option; (* None for EOF *)
+    stats : stats;
+    reader : (module Pcap.HDR);
+  }
+
   let reset_stats_counters t = ()
   let get_stats_counters t = t.stats
+  let empty_stats_counter = {
+      rx_bytes = 0L;
+      rx_pkts = 0l;
+      tx_bytes = 0L;
+      tx_pkts = 0l; 
+    }
 
   let id t = t.source 
-  let connect id = Lwt.return (`Error (`Unimplemented)) 
-  let disconnect _ = Lwt.return_unit
+  let connect id = 
+    K.read id.source_device id.file 0 (Pcap.sizeof_pcap_header) >>= 
+    fun result ->
+    match result with 
+    | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") ) 
+    | `Ok bufs -> 
+      (* hopefully we have a pcap header in bufs *)
+      match Pcap.detect (List.hd bufs) with
+      | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
+      | Some reader ->
+        return (`Ok { 
+          source = id;
+          seek = Some Pcap.sizeof_pcap_header;
+          stats = empty_stats_counter;
+          reader;
+        })
 
+  let disconnect t = 
+    Lwt.return_unit
+
+  (* writes go down the memory hole *)
   let write t buf = Lwt.return_unit
   let writev t bufs = Lwt.return_unit
 
-  let listen t cb = Lwt.return_unit
-  let mac t = t.source
+  let eof t =
+    { source = t.source;
+      seek = None;
+      stats = t.stats;
+      reader = t.reader; }
+
+  let advance_seek t seek =
+    match t.seek with
+    | None -> t
+    | Some prev_seek -> 
+      { source = t.source;
+        seek = Some (prev_seek + seek);
+        stats = t.stats;
+        reader = t.reader; }
+
+  let listen (t : t) cb = 
+    let read_wrapper i seek how_many =
+      (K.read i.source_device i.file seek how_many) >>= fun res -> match res with
+      | `Ok bufs -> return bufs
+      | `Error _ -> raise (Invalid_argument "Read failed")
+    in
+    match t.seek with
+    | None -> raise (Invalid_argument "Read after EOF")
+    | Some seek_pointer -> 
+      let next_packet t =
+        read_wrapper t.source seek_pointer Pcap.sizeof_pcap_packet 
+        >>= fun bufs ->
+        (* assume there's only one buf there; sizeof_pcap_packet is not large *)
+        let packet_header = List.hd bufs in 
+        if (Cstruct.len packet_header) < Pcap.sizeof_pcap_packet then
+          (* out of file *)
+          Lwt.return None
+        else begin
+          let t = advance_seek t Pcap.sizeof_pcap_packet in
+          (* try to read packet body *)
+          let module R = (val t.reader : Pcap.HDR) in
+          let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
+                                            packet_header) in
+          read_wrapper t.source seek_pointer packet_size >>= fun packet_bodyv ->
+          (* merge bufs into one big cstruct. *)
+          let condensed l = 
+            match l with
+            | hd :: [] -> hd
+            | _ -> 
+              let megathing = Cstruct.create (Cstruct.lenv l) in
+              let fill seek buf =
+                Cstruct.blit buf 0 megathing seek (Cstruct.len buf);
+                seek + (Cstruct.len buf)
+              in
+              ignore (List.fold_left fill 0 l);
+              megathing
+          in
+          let packet_body = condensed packet_bodyv in
+          let t = advance_seek t (Cstruct.len packet_body) in
+          return (Some (t, packet_body))
+        end
+      in
+      next_packet t >>= function
+      | None -> Lwt.return_unit
+      | Some (t, packet) -> cb packet
+
+
+  let mac t = t.source.file
 
 end
 
