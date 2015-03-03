@@ -69,13 +69,6 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
            choke if exposed to the file-level header *)
         let pcap_body = Cstruct.shift condensed Pcap.sizeof_pcap_header in
         let packet_seq = Pcap.packets reader pcap_body in
-        let num_packets = Cstruct.fold (fun a _ -> a + 1) packet_seq 0 in
-        C.log_s c (Printf.sprintf "cut out %d bytes of pcap header"
-                     Pcap.sizeof_pcap_header) 
-        >>= fun () ->
-        C.log_s c (Printf.sprintf "expecting %d packets" num_packets) 
-        >>= fun () ->
-        let packet_seq = Pcap.packets reader pcap_body in
         C.log_s c "got a packet sequence..." >>= fun () ->
         (* Cstruct.fold parrot packet_seq (Lwt.return_unit) *)
         Cstruct.fold pausing_reader packet_seq (Lwt.return None) >>=
