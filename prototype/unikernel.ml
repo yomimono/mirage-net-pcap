@@ -21,13 +21,6 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
      for our pseudonetif. *)
 
   let start c k n =
-    let parrot _ (packet_header, packet_body) = 
-      (* for now, ignore header information *)
-      (* send packet_body out the netif *)
-      Cstruct.hexdump packet_body;
-      Printf.printf "\n";
-      N.write n packet_body
-    in
     (* TODO: will need a better strategy for reading large pcaps *)
     let chunk_size = 1024000 in
     let file = "mirage_dhcp_discover.pcap" in
