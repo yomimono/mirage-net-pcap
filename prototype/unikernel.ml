@@ -173,24 +173,6 @@ end = struct
 end
 
 module Main (C: CONSOLE) (K: KV_RO) = struct
-  (* thing to do is probably try to read the amount of data that we know is in a
-    pcap file header to start off, 
-    then as we go on,
-    try to read the amount of data that we know is in the header for each packet,
-     and based on that, read the relevant amount of information and return it *)
-  (* that's kind of what `packets` does, of course, but it would be really nice
-     to get it as an Lwt_stream instead of a Cstruct.iter, and also not have to
-     pass the entire buffer at once -- I think that's what I was getting at with
-     this comment.  Since packets expects *not* to see the whole file-level
-     header, it should be possible to just keep getting new sequences until EOF *)
-  let enqueue_packets packet_seq =
-    let (queue, push) = Lwt_stream.create () in
-    let () = Cstruct.fold (fun _ packet -> push (Some packet)) packet_seq () in
-    let () = push None in (* EOF *)
-    queue
-  (* What is this buying us?  The ability to make something more complicated
-     than what we can express in a `fold`, I guess.  And I think we do need that
-     for our pseudonetif. *)
 
   let start c k =
     let module P = Reading_netif(K) in
