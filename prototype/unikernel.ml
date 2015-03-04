@@ -4,15 +4,17 @@ open Lwt
 module Reading_netif (K: KV_RO) : sig
   include V1.NETWORK
     with type 'a io = 'a Lwt.t
-     and type page_aligned_buffer = Cstruct.t
+     and type page_aligned_buffer = Io_page.t
      and type buffer = Cstruct.t
-     and type macaddr = string
+     and type macaddr = Macaddr.t
+
+  val id_of_desc : source:K.t -> read:string -> id
 
 end = struct
   type 'a io = 'a Lwt.t
-  type page_aligned_buffer = Cstruct.t
+  type page_aligned_buffer = Io_page.t
   type buffer = Cstruct.t
-  type macaddr = string
+  type macaddr = Macaddr.t
 
   type error = [ `Unimplemented 
                | `Disconnected 
@@ -26,13 +28,14 @@ end = struct
   }
 
   type id = {
-       source_device : K.t;
+       source : K.t;
        file : string; 
   }
 
   type t = {
     source : id; (* should really be something like an fd *) 
     seek : int option; (* None for EOF *)
+    last_read : float option;
     stats : stats;
     reader : (module Pcap.HDR);
   }
@@ -44,51 +47,78 @@ end = struct
       rx_pkts = 0l;
       tx_bytes = 0L;
       tx_pkts = 0l; 
-    }
+  }
+
+  let string_of_t t =
+    let explicate = function
+      | None -> "EOF"
+      | Some k -> string_of_int k
+    in
+    Printf.sprintf "source is file %s; we're at position %s" t.source.file
+      (explicate t.seek)
+
+  let id_of_desc ~source ~read = { source; file = read; }
 
   let id t = t.source 
-  let connect id = 
-    K.read id.source_device id.file 0 (Pcap.sizeof_pcap_header) >>= 
+  let connect (i : id) = 
+    K.read i.source i.file 0 (Pcap.sizeof_pcap_header) >>= 
     fun result ->
     match result with 
     | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") ) 
-    | `Ok bufs -> 
+    | `Ok bufs ->  (* huh, apparently this can return us an empty list? *)
+      match bufs with
+      | [] -> Lwt.return (`Error (`Unknown "empty file"))
+      | hd :: _ ->
       (* hopefully we have a pcap header in bufs *)
-      match Pcap.detect (List.hd bufs) with
-      | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
-      | Some reader ->
-        return (`Ok { 
-          source = id;
-          seek = Some Pcap.sizeof_pcap_header;
-          stats = empty_stats_counter;
-          reader;
-        })
+        match Pcap.detect hd with
+        | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
+        | Some reader ->
+          return (`Ok { 
+              source = i;
+              seek = Some Pcap.sizeof_pcap_header;
+              last_read = None;
+              stats = empty_stats_counter;
+              reader;
+            })
 
   let disconnect t = 
     Lwt.return_unit
 
   (* writes go down the memory hole *)
-  let write t buf = Lwt.return_unit
-  let writev t bufs = Lwt.return_unit
+  let writev t bufs = Printf.printf "packet written\n"; Cstruct.hexdump (List.hd
+                                                                           bufs); Lwt.return_unit
+  let write t buf = writev t [buf]
 
-  let eof t =
-    { source = t.source;
-      seek = None;
-      stats = t.stats;
-      reader = t.reader; }
+  let eof t = { t with seek = None; }
 
   let advance_seek t seek =
     match t.seek with
     | None -> t
-    | Some prev_seek -> 
-      { source = t.source;
-        seek = Some (prev_seek + seek);
-        stats = t.stats;
-        reader = t.reader; }
+    | Some prev_seek -> { t with seek = Some (prev_seek + seek); }
 
-  let listen (t : t) cb = 
-    let read_wrapper i seek how_many =
-      (K.read i.source_device i.file seek how_many) >>= fun res -> match res with
+  let set_last_read t last_read = 
+    { t with last_read = last_read; }
+
+  (* merge bufs into one big cstruct. *)
+  let combine_cstructs l = 
+    match l with
+    | hd :: [] -> hd
+    | _ -> 
+      let consolidated = Cstruct.create (Cstruct.lenv l) in
+      let fill seek buf =
+        Cstruct.blit buf 0 consolidated seek (Cstruct.len buf);
+        seek + (Cstruct.len buf)
+      in
+      ignore (List.fold_left fill 0 l);
+      consolidated
+
+  let rec listen t cb = 
+    let read_wrapper (i : id) seek how_many =
+      Printf.printf "trying to read %d bytes of packet" how_many;
+      (K.read i.source i.file seek how_many) >>= function
+      | `Ok [] -> raise (Invalid_argument 
+                           (Printf.sprintf "read an empty list, requested %d
+                           from %d" how_many seek))
       | `Ok bufs -> return bufs
       | `Error _ -> raise (Invalid_argument "Read failed")
     in
@@ -97,47 +127,57 @@ end = struct
     | Some seek_pointer -> 
       let next_packet t =
         read_wrapper t.source seek_pointer Pcap.sizeof_pcap_packet 
-        >>= fun bufs ->
-        (* assume there's only one buf there; sizeof_pcap_packet is not large *)
-        let packet_header = List.hd bufs in 
-        if (Cstruct.len packet_header) < Pcap.sizeof_pcap_packet then
-          (* out of file *)
-          Lwt.return None
-        else begin
-          let t = advance_seek t Pcap.sizeof_pcap_packet in
-          (* try to read packet body *)
-          let module R = (val t.reader : Pcap.HDR) in
-          let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
-                                            packet_header) in
-          read_wrapper t.source seek_pointer packet_size >>= fun packet_bodyv ->
-          (* merge bufs into one big cstruct. *)
-          let condensed l = 
-            match l with
-            | hd :: [] -> hd
-            | _ -> 
-              let megathing = Cstruct.create (Cstruct.lenv l) in
-              let fill seek buf =
-                Cstruct.blit buf 0 megathing seek (Cstruct.len buf);
-                seek + (Cstruct.len buf)
+        >>= function 
+        | [] -> Lwt.return None
+        | packet_header :: [] ->
+          if (Cstruct.len packet_header) < Pcap.sizeof_pcap_packet then begin
+            Printf.printf "end of file; t status: %s\n" (string_of_t t);
+            Lwt.return None
+          end
+          else begin
+            let t = advance_seek t Pcap.sizeof_pcap_packet in
+            (* try to read packet body *)
+            let module R = (val t.reader : Pcap.HDR) in
+            let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
+                                              packet_header) in
+            let packet_secs = R.get_pcap_packet_ts_sec packet_header in
+            let packet_usecs = R.get_pcap_packet_ts_usec packet_header in
+            let (t, delay) = 
+              let pack (secs, usecs) = 
+                let secs_of_usecs = (1.0 /. 1000000.0) in
+                (float_of_int (Int32.to_int secs)) +. 
+                ((float_of_int (Int32.to_int usecs)) *. secs_of_usecs)
               in
-              ignore (List.fold_left fill 0 l);
-              megathing
-          in
-          let packet_body = condensed packet_bodyv in
-          let t = advance_seek t (Cstruct.len packet_body) in
-          return (Some (t, packet_body))
-        end
+              let this_time = pack (packet_secs, packet_usecs) in
+              match t.last_read with
+              | None -> (set_last_read t (Some this_time), 5.0) (* 0.0 presents
+                        problems *)
+              | Some last_time ->
+                (set_last_read t (Some this_time)), (this_time -. last_time)
+            in
+            read_wrapper t.source (seek_pointer + Pcap.sizeof_pcap_packet) packet_size >>= fun packet_bodyv ->
+            let packet_body = combine_cstructs packet_bodyv in
+            let t = advance_seek t (packet_size) in
+            return (Some (t, delay, packet_body))
+          end
+        | packet_header :: more ->
+          raise (Invalid_argument "multipage packet header -- how small are your
+                   pages?")
       in
       next_packet t >>= function
       | None -> Lwt.return_unit
-      | Some (t, packet) -> cb packet
+      | Some (t, delay, packet) -> 
+        Printf.printf "delaying %f\n" delay;
+        Printf.printf "my netif is in state %s\n" (string_of_t t);
+        OS.Time.sleep delay >>= fun () -> 
+        cb packet >>= fun () -> 
+        listen t cb
 
-
-  let mac t = t.source.file
+  let mac t = Macaddr.broadcast (* arbitrarily *)
 
 end
 
-module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
+module Main (C: CONSOLE) (K: KV_RO) = struct
   (* thing to do is probably try to read the amount of data that we know is in a
     pcap file header to start off, 
     then as we go on,
@@ -157,55 +197,53 @@ module Main (C: CONSOLE) (K: KV_RO) (N: NETWORK) = struct
      than what we can express in a `fold`, I guess.  And I think we do need that
      for our pseudonetif. *)
 
-  let start c k n =
-    (* TODO: will need a better strategy for reading large pcaps *)
-    let chunk_size = 1024000 in
+  let start c k =
+    let module P = Reading_netif(K) in
+    let module E = Ethif.Make(P) in
+    let module I = Ipv4.Make(E) in
+    let module U = Udp.Make(I) in
+    let module D = Dhcp_clientv4.Make(C)(OS.Time)(Random)(U) in
+
+    let or_error c name fn t =
+      fn t >>= function 
+      | `Error e -> fail (Failure ("Error starting " ^ name))
+      | `Ok t -> return t
+    in
+    let red fmt    = Printf.sprintf ("\027[31m"^^fmt^^"\027[m") in
+    let green fmt  = Printf.sprintf ("\027[32m"^^fmt^^"\027[m") in
+    let yellow fmt = Printf.sprintf ("\027[33m"^^fmt^^"\027[m") in
+    let blue fmt   = Printf.sprintf ("\027[36m"^^fmt^^"\027[m") in
+        
     let file = "mirage_dhcp_discover.pcap" in
-    K.read k file 0 chunk_size >>= fun result -> 
-    match result with
-    | `Error _ -> 
-      C.log c (Printf.sprintf "I know of no file called %s \n" file);
-      Lwt.return_unit
-    | `Ok bufs -> 
-      (* merge bufs into one big cstruct.  TODO: This isn't really a 
-         nice way to do this. *)
-      let condensed = Cstruct.of_string (Cstruct.copyv bufs) in
-      let buflen = Cstruct.lenv bufs in
-      C.log c (Printf.sprintf "got %d bytes from file %s and stuck them in
-      something %d long" buflen file (Cstruct.len condensed));
-      match Pcap.detect condensed with
-      | Some reader ->
-        let module R = (val reader : Pcap.HDR) in
-        let pausing_reader l (packet_header, packet_body) =
-          let packet_secs = R.get_pcap_packet_ts_sec packet_header in
-          let packet_usecs = R.get_pcap_packet_ts_usec packet_header in
-          l >>= fun last_time ->
-          let how_long = 
-            match last_time with
-            | None -> 0.0
-            | Some (last_secs, last_usecs) -> 
-              let pack (secs, usecs) =
-                let secs_of_usecs = (1.0 /. 10000000.0) in
-                (float_of_int (Int32.to_int secs)) +.  
-                ((float_of_int (Int32.to_int usecs)) *. secs_of_usecs) 
-              in
-              let this_time = pack (packet_secs, packet_usecs) in
-              this_time -. (pack (last_secs, last_usecs))
-          in
-          C.log c (Printf.sprintf "Waiting %f\n" how_long);
-          OS.Time.sleep how_long >>= 
-          fun () -> 
-          N.write n packet_body >>= fun () -> 
-          return (Some (packet_secs, packet_usecs))
-        in
-        (* Pcap.packets expects to be called on the Pcap file body and will
-           choke if exposed to the file-level header *)
-        let pcap_body = Cstruct.shift condensed Pcap.sizeof_pcap_header in
-        let packet_seq = Pcap.packets reader pcap_body in
-        C.log_s c "got a packet sequence..." >>= fun () ->
-        (* Cstruct.fold parrot packet_seq (Lwt.return_unit) *)
-        Cstruct.fold pausing_reader packet_seq (Lwt.return None) >>=
-        fun _ -> Lwt.return_unit
-      | None -> C.log c (Printf.sprintf "Couldn't figure out how to treat %s as
-                           a valid pcap file\n" file); Lwt.return_unit
+    let pcap_netif_id = P.id_of_desc ~source:k ~read:file in
+    (* build interface on top of netif *)
+    or_error c "pcap_netif" P.connect pcap_netif_id >>= fun p ->
+    or_error c "ethif" E.connect p >>= fun e ->
+    or_error c "ipv4" I.connect e >>= fun i ->
+    or_error c "udpv4" U.connect i >>= fun u -> 
+    let dhcp, offers = D.create c (P.mac p) u in 
+    C.log_s c "beginning listen..." >>= fun () ->
+    P.listen p (
+      E.input 
+        ~arpv4:(fun buf -> 
+            return (C.log c (red "arp packet")))
+        ~ipv4:(
+        I.input 
+          ~tcp:(fun ~src ~dst buf -> return (C.log c (blue "tcp packet from %s"
+                                                (Ipaddr.V4.to_string src))))
+          ~udp:(
+            U.input ~listeners:
+              (fun ~dst_port -> Some (fun ~src ~dst ~src_port buf ->
+                 return (C.log c (blue "udp packet on port %d" dst_port))))
+              u
+          ) 
+          ~default:(
+            fun ~proto ~src ~dst buf -> return (
+              C.log c (green "other packet, proto %d, src %s, dst %s" proto
+                         (Ipaddr.V4.to_string src) (Ipaddr.V4.to_string dst)))
+          ) 
+          i
+      ) ~ipv6:(fun b -> C.log_s c (yellow "ipv6")) e
+    )
+
 end
