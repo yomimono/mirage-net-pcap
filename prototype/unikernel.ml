@@ -114,7 +114,6 @@ end = struct
 
   let rec listen t cb = 
     let read_wrapper (i : id) seek how_many =
-      Printf.printf "trying to read %d bytes of packet" how_many;
       (K.read i.source i.file seek how_many) >>= function
       | `Ok [] -> raise (Invalid_argument 
                            (Printf.sprintf "read an empty list, requested %d
@@ -131,7 +130,6 @@ end = struct
         | [] -> Lwt.return None
         | packet_header :: [] ->
           if (Cstruct.len packet_header) < Pcap.sizeof_pcap_packet then begin
-            Printf.printf "end of file; t status: %s\n" (string_of_t t);
             Lwt.return None
           end
           else begin
@@ -150,8 +148,7 @@ end = struct
               in
               let this_time = pack (packet_secs, packet_usecs) in
               match t.last_read with
-              | None -> (set_last_read t (Some this_time), 5.0) (* 0.0 presents
-                        problems *)
+              | None -> (set_last_read t (Some this_time), 0.0) 
               | Some last_time ->
                 (set_last_read t (Some this_time)), (this_time -. last_time)
             in
@@ -167,8 +164,6 @@ end = struct
       next_packet t >>= function
       | None -> Lwt.return_unit
       | Some (t, delay, packet) -> 
-        Printf.printf "delaying %f\n" delay;
-        Printf.printf "my netif is in state %s\n" (string_of_t t);
         OS.Time.sleep delay >>= fun () -> 
         cb packet >>= fun () -> 
         listen t cb
