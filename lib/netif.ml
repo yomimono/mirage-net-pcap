@@ -1,7 +1,6 @@
-module Netif (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
-
+module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
   type 'a io = 'a Lwt.t
-  type page_aligned_buffer = Cstruct.t
+  type page_aligned_buffer = Io_page.t
   type buffer = Cstruct.t
   type macaddr = Macaddr.t
   type error = [ `Unimplemented 

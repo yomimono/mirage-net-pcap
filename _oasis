@@ -12,5 +12,4 @@ Library "mirage-net-pcap"
   Path:               lib
   Findlibname:        mirage-net-pcap
   Modules:            Netif
-  BuildDepends:       mirage, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile 
-  XMETARequires:      mirage, pcap-format, crunch, lwt, cstruct, ipaddr, ipaddr, mirage-profile
+  BuildDepends:       mirage, io-page, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile 
