@@ -1,0 +1,7 @@
+include V1.NETWORK
+  with type 'a io = 'a Lwt.t
+   and type page_aligned_buffer = Io_page.t
+   and type buffer = Cstruct.t
+   and type macaddr = Macaddr.t
+
+val id_of_desc : source:K.t -> read:string -> id
