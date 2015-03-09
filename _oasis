@@ -1,0 +1,16 @@
+OASISFormat: 0.4
+Name:        mirage-net-pcap
+Version:     0.0.1
+Synopsis:    PCAP reader (via fs) represented as a Xen netif
+Authors:     Mindy Preston
+License:     ISC
+Plugins:     META (0.4), DevFiles (0.4)
+BuildTools:  ocamlbuild
+
+Library "mirage-net-pcap"
+  CompiledObject:     best
+  Path:               lib
+  Findlibname:        mirage-net-pcap
+  Modules:            Netif
+  BuildDepends:       mirage, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile 
+  XMETARequires:      mirage, pcap-format, crunch, lwt, cstruct, ipaddr, ipaddr, mirage-profile
