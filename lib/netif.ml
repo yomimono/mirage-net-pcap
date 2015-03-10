@@ -26,7 +26,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   type t = {
     source : id; (* should really be something like an fd *) 
-    seek : int option; (* None for EOF *)
+    seek : int; 
     last_read : float option;
     stats : stats;
     reader : (module Pcap.HDR);
@@ -42,10 +42,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
   }
 
   let string_of_t t =
-    let explicate = function
-      | None -> "EOF"
-      | Some k -> string_of_int k
-    in
+    let explicate k = string_of_int k in
     Printf.sprintf "source is file %s; we're at position %s" t.source.file
       (explicate t.seek)
 
@@ -53,11 +50,12 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   let id t = t.source 
   let connect (i : id) = 
-    Lwt.bind (K.read i.source i.file 0 (Pcap.sizeof_pcap_header)) (
+    let open Lwt in
+    K.read i.source i.file 0 (Pcap.sizeof_pcap_header) >>= 
     fun result ->
     match result with 
     | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") ) 
-    | `Ok (bufs : K.page_aligned_buffer list) ->  (* huh, apparently this can return us an empty list? *)
+    | `Ok bufs ->  (* huh, apparently this can return us an empty list? *)
       match bufs with
       | [] -> Lwt.return (`Error (`Unknown "empty file"))
       | hd :: _ ->
@@ -67,13 +65,11 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
         | Some reader ->
           Lwt.return (`Ok { 
               source = i;
-              seek = Some Pcap.sizeof_pcap_header;
+              seek = Pcap.sizeof_pcap_header;
               last_read = None;
               stats = empty_stats_counter;
               reader;
             })
-
-    )
 
   let disconnect t = 
     Lwt.return_unit
@@ -83,12 +79,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
                                                                            bufs); Lwt.return_unit
   let write t buf = writev t [buf]
 
-  let eof t = { t with seek = None; }
-
-  let advance_seek t seek =
-    match t.seek with
-    | None -> t
-    | Some prev_seek -> { t with seek = Some (prev_seek + seek); }
+  let advance_seek t seek = { t with seek = (t.seek + seek); }
 
   let set_last_read t last_read = 
     { t with last_read = last_read; }
@@ -110,58 +101,49 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     let open Lwt in 
     let read_wrapper (i : id) seek how_many =
       K.read i.source i.file seek how_many >>= function
-      | `Ok [] -> raise (Invalid_argument 
+      | `Ok [] -> Lwt.return None (* raise (Invalid_argument 
                            (Printf.sprintf "read an empty list, requested %d
-                           from %d" how_many seek))
-      | `Ok bufs -> return bufs
+                           from %d" how_many seek)) *)
+      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub buf 0 how_many))
+      | `Ok bufs -> Lwt.return (Some (combine_cstructs bufs))
       | `Error _ -> raise (Invalid_argument "Read failed")
     in
-    match t.seek with
-    | None -> raise (Invalid_argument "Read after EOF")
-    | Some seek_pointer -> 
-      let next_packet t =
-        read_wrapper t.source seek_pointer Pcap.sizeof_pcap_packet 
-        >>= function 
-        | [] -> Lwt.return None
-        | packet_header :: [] ->
-          if (Cstruct.len packet_header) < Pcap.sizeof_pcap_packet then begin
-            Lwt.return None
-          end
-          else begin
-            let t = advance_seek t Pcap.sizeof_pcap_packet in
-            (* try to read packet body *)
-            let module R = (val t.reader : Pcap.HDR) in
-            let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
-                                              packet_header) in
-            let packet_secs = R.get_pcap_packet_ts_sec packet_header in
-            let packet_usecs = R.get_pcap_packet_ts_usec packet_header in
-            let (t, delay) = 
-              let pack (secs, usecs) = 
-                let secs_of_usecs = (1.0 /. 1000000.0) in
-                (float_of_int (Int32.to_int secs)) +. 
-                ((float_of_int (Int32.to_int usecs)) *. secs_of_usecs)
-              in
-              let this_time = pack (packet_secs, packet_usecs) in
-              match t.last_read with
-              | None -> (set_last_read t (Some this_time), 0.0) 
-              | Some last_time ->
-                (set_last_read t (Some this_time)), (this_time -. last_time)
-            in
-            read_wrapper t.source (seek_pointer + Pcap.sizeof_pcap_packet) packet_size >>= fun packet_bodyv ->
-            let packet_body = combine_cstructs packet_bodyv in
-            let t = advance_seek t (packet_size) in
-            return (Some (t, delay, packet_body))
-          end
-        | packet_header :: more ->
-          raise (Invalid_argument "multipage packet header -- how small are your
-                   pages?")
-      in
-      next_packet t >>= function
-      | None -> Lwt.return_unit
-      | Some (t, delay, packet) -> 
-        T.sleep delay >>= fun () -> 
-        cb packet >>= fun () -> 
-        listen t cb
+    let next_packet t =
+      read_wrapper t.source t.seek Pcap.sizeof_pcap_packet >>= 
+      function 
+      | None -> Lwt.return None
+      | Some packet_header ->
+        let t = advance_seek t Pcap.sizeof_pcap_packet in
+        (* try to read packet body *)
+        let module R = (val t.reader : Pcap.HDR) in
+        let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
+                                          packet_header) in
+        let packet_secs = R.get_pcap_packet_ts_sec packet_header in
+        let packet_usecs = R.get_pcap_packet_ts_usec packet_header in
+        let (t, delay) = 
+          let pack (secs, usecs) = 
+            let secs_of_usecs = (1.0 /. 1000000.0) in
+            (float_of_int (Int32.to_int secs)) +. 
+            ((float_of_int (Int32.to_int usecs)) *. secs_of_usecs)
+          in
+          let this_time = pack (packet_secs, packet_usecs) in
+          match t.last_read with
+          | None -> (set_last_read t (Some this_time), 0.0) 
+          | Some last_time ->
+            (set_last_read t (Some this_time)), (this_time -. last_time)
+        in
+        read_wrapper t.source t.seek packet_size >>= function 
+        | None -> Lwt.return None
+        | Some packet_body ->
+          let t = advance_seek t (packet_size) in
+          return (Some (t, delay, packet_body))
+    in
+    next_packet t >>= function
+    | None -> Lwt.return_unit
+    | Some (next_t, delay, packet) -> 
+      T.sleep delay >>= fun () -> 
+      cb packet >>= fun () -> 
+      listen next_t cb
 
   let mac t = Macaddr.broadcast (* arbitrarily *)
 
