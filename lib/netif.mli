@@ -5,5 +5,9 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) : sig
      and type buffer = Cstruct.t
      and type macaddr = Macaddr.t
 
-  val id_of_desc : source:K.t -> read:string -> id
+  (* use "timing" to accelerate or decelerate playback of packets.  1.0 is
+     playback at the original recorded rate.  numbers greater than 1.0 will
+     delay; numbers smaller than 1.0 will speed up playback.  None gives no
+     delay at all. *)
+  val id_of_desc : ?timing:float option -> source:K.t -> read:string -> id
 end

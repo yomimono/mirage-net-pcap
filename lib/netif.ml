@@ -20,6 +20,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
   }
 
   type id = {
+    timing : float option;
     source : K.t;
     file : string; 
   }
@@ -46,7 +47,9 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     Printf.sprintf "source is file %s; we're at position %s" t.source.file
       (explicate t.seek)
 
-  let id_of_desc ~source ~read = { source; file = read; }
+  let id_of_desc ?timing ~source ~read = match timing with
+    | Some f -> { timing = f; source; file = read; }
+    | None -> { timing = Some 1.0; source; file = read; }
 
   let id t = t.source 
   let connect (i : id) = 
@@ -130,7 +133,11 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
           match t.last_read with
           | None -> (set_last_read t (Some this_time), 0.0) 
           | Some last_time ->
-            (set_last_read t (Some this_time)), (this_time -. last_time)
+            match t.source.timing with
+            | None -> (set_last_read t (Some this_time), 0.0)
+            | Some timing ->
+            (set_last_read t (Some this_time)), ((this_time -. last_time) *.
+                                                 timing) 
         in
         read_wrapper t.source t.seek packet_size >>= function 
         | None -> Lwt.return None
