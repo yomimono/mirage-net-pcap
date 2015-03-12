@@ -21,8 +21,9 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   type id = {
     timing : float option;
-    source : K.t;
     file : string;
+    source : K.t;
+    mac : Macaddr.t;
   }
 
   type t = {
@@ -48,9 +49,12 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     Printf.sprintf "source is file %s; we're at position %s" t.source.file
       (explicate t.seek)
 
-  let id_of_desc ?timing ~source ~read = match timing with
-    | Some f -> { timing = f; source; file = read; }
-    | None -> { timing = Some 1.0; source; file = read; }
+  let mac t = t.source.mac
+
+  let id_of_desc ?timing ?(mac = Macaddr.broadcast) ~source ~read =
+    match timing with
+    | Some f -> { timing = f; source; file = read; mac }
+    | None -> { timing = Some 1.0; source; file = read; mac}
 
   let id t = t.source
   let connect (i : id) =
@@ -151,7 +155,5 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
       T.sleep delay >>= fun () ->
       cb packet >>= fun () ->
       listen next_t cb
-
-  let mac t = Macaddr.broadcast (* arbitrarily *)
 
 end
