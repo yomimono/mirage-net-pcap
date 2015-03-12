@@ -31,6 +31,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     last_read : float option;
     stats : stats;
     reader : (module Pcap.HDR);
+    written : Cstruct.t list ref;
   }
 
   let reset_stats_counters t = ()
@@ -72,15 +73,16 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
               last_read = None;
               stats = empty_stats_counter;
               reader;
+              written = ref [];
             })
 
   let disconnect t = 
     Lwt.return_unit
 
-  (* writes go down the memory hole *)
-  let writev t bufs = Printf.printf "packet written\n"; Cstruct.hexdump (List.hd
-                                                                           bufs); Lwt.return_unit
+  let writev t bufs = t.written := t.!written @ bufs; Lwt.return_unit
   let write t buf = writev t [buf]
+
+  let get_written t = t.!written
 
   let advance_seek t seek = { t with seek = (t.seek + seek); }
 

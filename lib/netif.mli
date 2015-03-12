@@ -10,4 +10,8 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) : sig
      delay; numbers smaller than 1.0 will speed up playback.  None gives no
      delay at all. *)
   val id_of_desc : ?timing:float option -> source:K.t -> read:string -> id
+  val connect : id -> [ `Error of error | `Ok of t ] io
+
+  (* return all packets written to this netif *)
+  val get_written : t -> Cstruct.t list
 end
