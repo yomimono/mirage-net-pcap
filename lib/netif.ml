@@ -51,7 +51,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   let mac t = t.source.mac
 
-  let id_of_desc ?timing ?(mac = Macaddr.broadcast) ~source ~read =
+  let id_of_desc ?timing ~mac ~source ~read =
     match timing with
     | Some f -> { timing = f; source; file = read; mac }
     | None -> { timing = Some 1.0; source; file = read; mac}

@@ -7,16 +7,13 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) : sig
 
   val connect : id -> [ `Error of error | `Ok of t ] io
 
-  val id_of_desc : ?timing:float option -> ?mac:Macaddr.t -> source:K.t -> read:string -> id
-  (** Generate an id for use with [connect].
+  val id_of_desc : ?timing:float option -> mac:Macaddr.t -> source:K.t -> read:string -> id
+  (** Generate an id for use with [connect] with MAC address [mac].
       [source] is a KV_RO.t from which to attempt to read a file named [read].
       use [timing] to accelerate or decelerate playback of packets.  1.0 is
       playback at the original recorded rate.  numbers greater than 1.0 will
       delay; numbers smaller than 1.0 will speed up playback.  None gives no
-      artificial delay and plays back packets as quickly as possible.
-      optionally, set a MAC address for the netif with [mac]; otherwise, claim
-      the broadcast address, which will cause ethifs built on top of this netif
-      to only receive broadcast traffic.  *)
+      artificial delay and plays back packets as quickly as possible. *)
 
   val get_written : t -> Cstruct.t list
   (** return all frames written to this netif, in the order they were written.
