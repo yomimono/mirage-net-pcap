@@ -15,7 +15,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.               
  *)     
 
-module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) : sig
+module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT.TIME) : sig
   include V1.NETWORK
     with type 'a io = 'a Lwt.t
      and type page_aligned_buffer = Io_page.t
@@ -24,7 +24,8 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) : sig
 
   val connect : id -> [ `Error of error | `Ok of t ] io
 
-  val id_of_desc : ?timing:float option -> mac:Macaddr.t -> source:K.t -> read:string -> id
+  val id_of_desc : ?timing:float option -> mac:Macaddr.t -> source:FS.t -> 
+    read:string -> write:string -> id
   (** Generate an id for use with [connect] with MAC address [mac].
       [source] is a KV_RO.t from which to attempt to read a file named [read].
       use [timing] to accelerate or decelerate playback of packets.  1.0 is

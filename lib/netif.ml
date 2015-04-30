@@ -15,7 +15,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.               
  *)     
 
-module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
+module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT.TIME) = struct
   type 'a io = 'a Lwt.t
   type page_aligned_buffer = Io_page.t
   type buffer = Cstruct.t
@@ -26,7 +26,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   type read_result = [
       `Ok of page_aligned_buffer list
-    | `Error of K.error
+    | `Error of FS.error
   ]
 
   type stats = {
@@ -38,8 +38,9 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   type id = {
     timing : float option;
-    file : string;
-    source : K.t;
+    read : string;
+    write : string;
+    source : FS.t;
     mac : Macaddr.t;
   }
 
@@ -48,7 +49,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     seek : int;
     last_read : float option;
     stats : stats;
-    reader : (module Pcap.HDR);
+    pcap_impl: (module Pcap.HDR);
     written : Cstruct.t list ref;
   }
 
@@ -63,39 +64,43 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
 
   let string_of_t t =
     let explicate k = string_of_int k in
-    Printf.sprintf "source is file %s; we're at position %s" t.source.file
+    Printf.sprintf "source is file %s; we're at position %s" t.source.read
       (explicate t.seek)
 
   let mac t = t.source.mac
 
-  let id_of_desc ?timing ~mac ~source ~read =
+  let id_of_desc ?timing ~mac ~source ~read ~write =
     match timing with
-    | Some f -> { timing = f; source; file = read; mac }
-    | None -> { timing = Some 1.0; source; file = read; mac}
+    | Some f -> { timing = f; source; read; write; mac }
+    | None -> { timing = Some 1.0; source; read; write; mac}
 
   let id t = t.source
   let connect (i : id) =
     let open Lwt in
-    K.read i.source i.file 0 (Pcap.sizeof_pcap_header) >>=
-    fun result ->
-    match result with
+    FS.create i.source i.write >>= function
+      (* TODO: let our own errors reflect the possible errors in V1_LWT.FS *)
+    | `Error `File_already_exists _ -> Lwt.return (`Error (`Unknown "there's
+    already a file there; refusing to overwrite it") )
+    | `Error _ -> Lwt.return (`Error (`Unknown "FS.create failed"))
+    | `Ok () ->
+    FS.read i.source i.read 0 (Pcap.sizeof_pcap_header) >>= function
     | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") )
-    | `Ok bufs ->
-      match bufs with
-      | [] -> Lwt.return (`Error (`Unknown "empty file"))
-      | hd :: _ ->
-        (* hopefully we have a pcap header in bufs *)
-        match Pcap.detect hd with
-        | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
-        | Some reader ->
-          Lwt.return (`Ok {
-              source = i;
-              seek = Pcap.sizeof_pcap_header;
-              last_read = None;
-              stats = empty_stats_counter;
-              reader;
-              written = ref [];
-            })
+    | `Ok [] -> Lwt.return (`Error (`Unknown "empty file"))
+    (* complete header should fit easily in the first page for any reasonable
+         page size, so only consider the first page when attempting to establish
+         the parser *)
+    | `Ok (hd :: _) ->
+      match Pcap.detect (Io_page.to_cstruct hd) with
+      | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
+      | Some pcap_impl ->
+        Lwt.return (`Ok {
+            source = i;
+            seek = Pcap.sizeof_pcap_header;
+            last_read = None;
+            stats = empty_stats_counter;
+            pcap_impl;
+            written = ref [];
+          })
 
   let disconnect t =
     Lwt.return_unit
@@ -126,10 +131,13 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
   let rec listen t cb =
     let open Lwt in
     let read_wrapper (i : id) seek how_many =
-      K.read i.source i.file seek how_many >>= function
+      FS.read i.source i.read seek how_many >>= function
       | `Ok [] -> Lwt.return None
-      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub buf 0 how_many))
-      | `Ok bufs -> Lwt.return (Some (combine_cstructs bufs))
+      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub 
+                                      (Io_page.to_cstruct buf) 
+                                      0 how_many))
+      | `Ok bufs -> let bufs = List.map Io_page.to_cstruct bufs in
+        Lwt.return (Some (combine_cstructs bufs))
       | `Error _ -> raise (Invalid_argument "Read failed")
     in
     let next_packet t =
@@ -139,7 +147,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
       | Some packet_header ->
         let t = advance_seek t Pcap.sizeof_pcap_packet in
         (* try to read packet body *)
-        let module R = (val t.reader : Pcap.HDR) in
+        let module R = (val t.pcap_impl: Pcap.HDR) in
         let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
                                           packet_header) in
         let packet_secs = R.get_pcap_packet_ts_sec packet_header in
