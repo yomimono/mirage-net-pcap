@@ -15,7 +15,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.               
  *)     
 
-module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT.TIME) = struct
+module Make 
+    (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) 
+    (T: V1_LWT.TIME) 
+    (Clock: V1.CLOCK) = struct
   type 'a io = 'a Lwt.t
   type page_aligned_buffer = Io_page.t
   type buffer = Cstruct.t
@@ -45,12 +48,14 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
   }
 
   type t = {
-    source : id; (* should really be something like an fd *)
-    seek : int;
+    source : id;
+    read_seek : int;
+    mutable write_seek : int; (* boooooo *)
     last_read : float option;
     stats : stats;
-    pcap_impl: (module Pcap.HDR);
-    written : Cstruct.t list ref;
+    pcap_writer: (module Pcap_write.Pcap_writer
+                   with type error = FS.error and type fs = FS.t);
+    pcap_reader: (module Pcap.HDR)
   }
 
   let reset_stats_counters t = ()
@@ -63,9 +68,8 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
   }
 
   let string_of_t t =
-    let explicate k = string_of_int k in
-    Printf.sprintf "source is file %s; we're at position %s" t.source.read
-      (explicate t.seek)
+    Printf.sprintf "source is file %s, sink is file %s, we're at read position %s" 
+      t.source.read t.source.write (string_of_int t.read_seek)
 
   let mac t = t.source.mac
 
@@ -77,12 +81,6 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
   let id t = t.source
   let connect (i : id) =
     let open Lwt in
-    FS.create i.source i.write >>= function
-      (* TODO: let our own errors reflect the possible errors in V1_LWT.FS *)
-    | `Error `File_already_exists _ -> Lwt.return (`Error (`Unknown "there's
-    already a file there; refusing to overwrite it") )
-    | `Error _ -> Lwt.return (`Error (`Unknown "FS.create failed"))
-    | `Ok () ->
     FS.read i.source i.read 0 (Pcap.sizeof_pcap_header) >>= function
     | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") )
     | `Ok [] -> Lwt.return (`Error (`Unknown "empty file"))
@@ -93,24 +91,51 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
       match Pcap.detect (Io_page.to_cstruct hd) with
       | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
       | Some pcap_impl ->
-        Lwt.return (`Ok {
-            source = i;
-            seek = Pcap.sizeof_pcap_header;
-            last_read = None;
-            stats = empty_stats_counter;
-            pcap_impl;
-            written = ref [];
-          })
+        let module Reader = (val pcap_impl) in
+        let module Writer = Pcap_write.Make (Reader) (FS) in
+        Writer.create_pcap_file i.source i.write >>= function
+        | `Error p -> Lwt.return (`Error (`Unknown "couldn't write file"))
+        (* by opening the read file first, we can punt on endianness, version,
+           etc  and just use the ones we detected in the source file, since
+           these aren't provided by ocap afaict *)
+        | `Ok () ->
+          Lwt.return (`Ok {
+              source = i;
+              read_seek = Pcap.sizeof_pcap_header;
+              write_seek = Pcap.sizeof_pcap_header;
+              last_read = None;
+              stats = empty_stats_counter;
+              pcap_writer = (module Writer);
+              pcap_reader = (module Reader);
+            })
 
   let disconnect t =
     Lwt.return_unit
 
-  let writev t bufs = t.written := t.!written @ bufs; Lwt.return_unit
-  let write t buf = writev t [buf]
+  (* is the expected semantics of writev that each packet will be in its own
+       cstruct?  since we don't deal with jumbo frames, it's unlikely that there
+       are packets *bigger* than a page, which probably already don't work on
+       other backends *)
+  let write t buf = 
+    let (>>=) = Lwt.bind in
+    let module W = (val t.pcap_writer) in
+    (* TODO: buf might be >1 page :( *)
+    (* things supplied to write are not necessarily page-aligned *)
+    let page = Io_page.get 1 in
+    let header = Io_page.to_cstruct page in
+    let header_size = 16 in
+    let fs, file = t.source.source, t.source.write in
+    W.append_packet_to_file fs file t.write_seek (Clock.time ()) header
+    >>= function
+    | `Error p -> Lwt.return_unit(* TODO: raise an exception *)
+    | `Ok bytes_written ->
+      t.write_seek <- t.write_seek + bytes_written;
+      Lwt.return_unit
 
-  let get_written t = t.!written
+  let writev t bufs = 
+    Lwt.join (List.map (write t) bufs)
 
-  let advance_seek t seek = { t with seek = (t.seek + seek); }
+  let advance_read_seek t read_seek = { t with read_seek = (t.read_seek + read_seek); }
 
   let set_last_read t last_read =
     { t with last_read = last_read; }
@@ -121,17 +146,17 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
     | hd :: [] -> hd
     | _ ->
       let consolidated = Cstruct.create (Cstruct.lenv l) in
-      let fill seek buf =
-        Cstruct.blit buf 0 consolidated seek (Cstruct.len buf);
-        seek + (Cstruct.len buf)
+      let fill read_seek buf =
+        Cstruct.blit buf 0 consolidated read_seek (Cstruct.len buf);
+        read_seek + (Cstruct.len buf)
       in
       ignore (List.fold_left fill 0 l);
       consolidated
 
   let rec listen t cb =
     let open Lwt in
-    let read_wrapper (i : id) seek how_many =
-      FS.read i.source i.read seek how_many >>= function
+    let read_wrapper (i : id) read_seek how_many =
+      FS.read i.source i.read read_seek how_many >>= function
       | `Ok [] -> Lwt.return None
       | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub 
                                       (Io_page.to_cstruct buf) 
@@ -141,13 +166,13 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
       | `Error _ -> raise (Invalid_argument "Read failed")
     in
     let next_packet t =
-      read_wrapper t.source t.seek Pcap.sizeof_pcap_packet >>=
+      read_wrapper t.source t.read_seek Pcap.sizeof_pcap_packet >>=
       function
       | None -> Lwt.return None
       | Some packet_header ->
-        let t = advance_seek t Pcap.sizeof_pcap_packet in
+        let t = advance_read_seek t Pcap.sizeof_pcap_packet in
         (* try to read packet body *)
-        let module R = (val t.pcap_impl: Pcap.HDR) in
+        let module R = (val t.pcap_reader) in
         let packet_size = Int32.to_int (R.get_pcap_packet_incl_len
                                           packet_header) in
         let packet_secs = R.get_pcap_packet_ts_sec packet_header in
@@ -168,10 +193,10 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
               (set_last_read t (Some this_time)), ((this_time -. last_time) *.
                                                    timing)
         in
-        read_wrapper t.source t.seek packet_size >>= function
+        read_wrapper t.source t.read_seek packet_size >>= function
         | None -> Lwt.return None
         | Some packet_body ->
-          let t = advance_seek t (packet_size) in
+          let t = advance_read_seek t (packet_size) in
           return (Some (t, delay, packet_body))
     in
     next_packet t >>= function

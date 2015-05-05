@@ -15,7 +15,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.               
  *)     
 
-module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT.TIME) : sig
+module Make 
+    (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) 
+    (T: V1_LWT.TIME) 
+    (Clock: V1.CLOCK) : sig
   include V1.NETWORK
     with type 'a io = 'a Lwt.t
      and type page_aligned_buffer = Io_page.t
@@ -33,7 +36,4 @@ module Make (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) (T: V1_LWT
       delay; numbers smaller than 1.0 will speed up playback.  None gives no
       artificial delay and plays back packets as quickly as possible. *)
 
-  val get_written : t -> Cstruct.t list
-  (** return all frames written to this netif, in the order they were written.
-     Each element in the list represents the contents of a call to `write`. *)
 end
