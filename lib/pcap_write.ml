@@ -12,7 +12,7 @@ module type Pcap_writer = sig
 end
 
 module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
-                                     = Io_page.t) = struct
+                                     = Cstruct.t) = struct
 
   type fs = FS.t
   type error = FS.error
@@ -42,10 +42,9 @@ module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
       (* write a pcap header to that file *)
       (* ocaml-pcap doesn't seem to have a nice default for this, although
          it does expose the type *)
-      let p = Io_page.get 1 in
-      let header = Io_page.to_cstruct p in
+      let header = Cstruct.create 1024 (* TODO: c'mon *) in
       create_file_header header;
-      FS.write fs file 0 p 
+      FS.write fs file 0 header
   (* TODO: let our own errors reflect the possible errors in V1_LWT.FS *)
 
   let create_packet_header header time packet_size =
@@ -58,12 +57,11 @@ module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
   let append_packet_to_file fs file offset time packet =
     let (>>=) = Lwt.bind in
     let header_size = 4*4 in (* W doesn't give us sizeof_pcap_packet *)
-    let page = Io_page.get 1 in
-    let header = Io_page.to_cstruct page in
     let packet_size = Cstruct.len packet in
+    let header = Cstruct.create (header_size + packet_size) in
     create_packet_header header time packet_size;
     Cstruct.blit packet 0 header header_size packet_size;
-    FS.write fs file offset page >>= function
+    FS.write fs file offset header >>= function
     | `Ok () -> Lwt.return (`Ok (header_size + packet_size))
     | `Error q -> Lwt.return (`Error q)
 

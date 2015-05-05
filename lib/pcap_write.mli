@@ -26,5 +26,5 @@ module type Pcap_writer = sig
 end
 
 module Make (Pcap : Pcap.HDR) 
-    (FS : V1_LWT.FS with type page_aligned_buffer = Io_page.t) : 
+    (FS : V1_LWT.FS with type page_aligned_buffer = Cstruct.t) : 
   Pcap_writer with type error = FS.error and type fs = FS.t
