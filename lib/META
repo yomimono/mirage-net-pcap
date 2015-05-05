@@ -1,9 +1,9 @@
 # OASIS_START
-# DO NOT EDIT (digest: 7f4bb4031245289076b640390bf69e8c)
+# DO NOT EDIT (digest: ce4eb4cc02f3678b2d6afb5a5d37d4f9)
 version = "0.0.1"
 description = "PCAP reader (via fs) represented as a Xen netif"
 requires =
-"mirage io-page pcap-format lwt.syntax cstruct cstruct.syntax crunch ipaddr mirage-profile"
+"mirage-types io-page pcap-format lwt.syntax cstruct cstruct.syntax crunch ipaddr mirage-profile"
 archive(byte) = "mirage-net-pcap.cma"
 archive(byte, plugin) = "mirage-net-pcap.cma"
 archive(native) = "mirage-net-pcap.cmxa"
