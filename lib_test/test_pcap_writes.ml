@@ -10,14 +10,14 @@ let zero_cstruct cs =
   let i = Cstruct.iter (fun c -> Some 1) zero cs in
   Cstruct.fold (fun b a -> b) i cs
 
-(* need to do necessary contortions to get a Pcap_writer *)
-let exn_too_small () =
+let file_header_exn_too_small () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let check_with_length length =
     (* slightly convoluted code, since we can't OUnit.assert_raises a generic
-       Invalid_argument; we'll only match if we get the error string right *)
+       Invalid_argument (doing so will only match if we get the error string
+       right) *)
     match (try Some (Writer.create_file_header (Cstruct.create length))
-      with | Invalid_argument _ -> None)
+      with Invalid_argument _ -> None)
     with
     | Some () -> OUnit.assert_failure 
                   "Claimed success in writing to a buffer that is too small to contain the full file header"
@@ -27,10 +27,10 @@ let exn_too_small () =
   List.iter check_with_length [0;23];
   Lwt.return_unit
 
-let big_enough_gets_sensible_header () =
+let file_header_sensible_readback () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let header = Cstruct.create 24 in
-  zero_cstruct header;
+  let header = zero_cstruct header in
   Writer.create_file_header header;
   (* check first field and last field *)
   OUnit.assert_equal (Pcap.magic_number) (Pcap.BE.get_pcap_header_magic_number header);
@@ -44,8 +44,35 @@ let big_enough_gets_sensible_header () =
 
 (* create_packet_header: 
    throws exc for too small a buffer,
-   writes something nonzero to a not-too-small buffer 
+   writes something nonzero to a not-too-small buffer,
+   time value written in header reflects what was requested in args
+   if we request a write of >=65535, snaplen is 65535 and origlen is what we
+   requested
+   if we request a write of <65535, snaplen = origlen = requested length
 *)
+let packet_header_exn_too_small () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let check_with_length length =
+    match (try Some (Writer.create_packet_header (Cstruct.create length) 0.1 40)
+      with Invalid_argument _ -> None)
+    with
+    | Some () -> OUnit.assert_failure 
+                   "Claimed success in writing to a buffer that is too small to contain the full file header"
+    | None -> ()
+  in
+  List.iter check_with_length [0; 15];
+  Lwt.return_unit
+
+let packet_header_correct_values () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let header = Cstruct.create 16 in
+  let header = zero_cstruct header in
+  Writer.create_packet_header header 1.2 4096;
+  OUnit.assert_equal 1l (Pcap.BE.get_pcap_packet_ts_sec header);
+  OUnit.assert_equal 200000l (Pcap.BE.get_pcap_packet_ts_sec header);
+  OUnit.assert_equal 4096l (Pcap.BE.get_pcap_packet_incl_len header);
+  OUnit.assert_equal 4096l (Pcap.BE.get_pcap_packet_orig_len header);
+  Lwt.return_unit
 
 (* create_pcap_file: 
    invalid write cases return the errors we expect 
@@ -61,12 +88,10 @@ let big_enough_gets_sensible_header () =
    (we need to do better on this generally in mirage;
    in lots of places, we'll blow up if we receive a packet with valid headers 
    that encapsulates nothing)
-   if we request a write of >65535, it's truncated
    if we request a write of >1 page size, it all gets written (superjumbo
    frames)
    written packets have the requested time
    written packets have the correct snaplen
-   written packets, if truncated, have the correct origlen
    attempting to write to a file that hasn't been "initialized" fails
       (support for appends?)
    attempting to write when the FS is full results in an error (is this
@@ -77,11 +102,11 @@ let lwt_run f () = Lwt_main.run (f ())
 
 let () =
   let create_file_header = [
-    "exn_too_small", `Quick, lwt_run exn_too_small;
-    "big_enough_gets_sensible_header", `Quick, lwt_run big_enough_gets_sensible_header
+    "file_header_exn_too_small", `Quick, lwt_run file_header_exn_too_small;
+    "file_header_sensible_readback", `Quick, lwt_run file_header_sensible_readback
   ] in
   let create_packet_header = [
-
+    "packet_header_exn_too_small", `Quick, lwt_run packet_header_exn_too_small;
   ] in
   let create_pcap_file = [
 
