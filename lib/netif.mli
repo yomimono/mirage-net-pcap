@@ -16,7 +16,7 @@
  *)     
 
 module Make 
-    (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) 
+    (FS: V1_LWT.FS with type page_aligned_buffer = Cstruct.t) 
     (T: V1_LWT.TIME) 
     (Clock: V1.CLOCK) : sig
   include V1.NETWORK

@@ -16,7 +16,7 @@
  *)     
 
 module Make 
-    (FS: V1_LWT.FS with type page_aligned_buffer = Io_page.t) 
+    (FS: V1_LWT.FS with type page_aligned_buffer = Cstruct.t) 
     (T: V1_LWT.TIME) 
     (Clock: V1.CLOCK) = struct
   type 'a io = 'a Lwt.t
@@ -88,7 +88,7 @@ module Make
          page size, so only consider the first page when attempting to establish
          the parser *)
     | `Ok (hd :: _) ->
-      match Pcap.detect (Io_page.to_cstruct hd) with
+      match Pcap.detect hd with
       | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
       | Some pcap_impl ->
         let module Reader = (val pcap_impl) in
@@ -158,11 +158,8 @@ module Make
     let read_wrapper (i : id) read_seek how_many =
       FS.read i.source i.read read_seek how_many >>= function
       | `Ok [] -> Lwt.return None
-      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub 
-                                      (Io_page.to_cstruct buf) 
-                                      0 how_many))
-      | `Ok bufs -> let bufs = List.map Io_page.to_cstruct bufs in
-        Lwt.return (Some (combine_cstructs bufs))
+      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub buf 0 how_many))
+      | `Ok bufs -> Lwt.return (Some (combine_cstructs bufs))
       | `Error _ -> raise (Invalid_argument "Read failed")
     in
     let next_packet t =
