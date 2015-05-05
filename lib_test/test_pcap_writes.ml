@@ -68,9 +68,9 @@ let packet_header_correct_values () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let header = Cstruct.create 16 in
   let header = zero_cstruct header in
-  Writer.create_packet_header header 1.2 4096;
+  Writer.create_packet_header header 1.3 4096;
   OUnit.assert_equal ~printer 1l (Pcap.BE.get_pcap_packet_ts_sec header);
-  OUnit.assert_equal ~printer 200000l (Pcap.BE.get_pcap_packet_ts_usec header);
+  OUnit.assert_equal ~printer 300000l (Pcap.BE.get_pcap_packet_ts_usec header);
   OUnit.assert_equal ~printer 4096l (Pcap.BE.get_pcap_packet_incl_len header);
   OUnit.assert_equal ~printer 4096l (Pcap.BE.get_pcap_packet_orig_len header);
   Lwt.return_unit
