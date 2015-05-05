@@ -5,20 +5,42 @@ open Lwt
    feeding created cstruct to Pcap.detect gives us Some mod and not None 
 *)
 
+let zero_cstruct cs =
+  let zero c = Cstruct.set_char c 0 '\000' in
+  let i = Cstruct.iter (fun c -> Some 1) zero cs in
+  Cstruct.fold (fun b a -> b) i cs
+
 (* need to do necessary contortions to get a Pcap_writer *)
 let exn_too_small () =
-  let module Reader : Pcap.HDR = Pcap.BE in (*
-  FS_unix.connect "test/write" >>= function
-  | `Error e -> OUnit.assert_failure ("couldn't make test file: " ^
-                                      FS_unix.string_of_error e)
-  | `Ok file ->  *)
-  let module Writer = Pcap_write.Make(Reader)(FS_unix) in
-  (* TODO: try assert_raises with generic string; this is brittle *)
-  let expected_str = "invalid bounds (index 0, length 4)" in
-  OUnit.assert_raises (Invalid_argument expected_str) (fun () -> Writer.create_file_header
-                                                           (Cstruct.create 3));
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let check_with_length length =
+    (* slightly convoluted code, since we can't OUnit.assert_raises a generic
+       Invalid_argument; we'll only match if we get the error string right *)
+    match (try Some (Writer.create_file_header (Cstruct.create length))
+      with | Invalid_argument _ -> None)
+    with
+    | Some () -> OUnit.assert_failure 
+                  "Claimed success in writing to a buffer that is too small to contain the full file header"
+    | None -> () (* we correctly raised an exception *)
+                        
+  in
+  List.iter check_with_length [0;23];
   Lwt.return_unit
 
+let big_enough_gets_sensible_header () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let header = Cstruct.create 24 in
+  zero_cstruct header;
+  Writer.create_file_header header;
+  (* check first field and last field *)
+  OUnit.assert_equal (Pcap.magic_number) (Pcap.BE.get_pcap_header_magic_number header);
+  OUnit.assert_equal (Some Pcap.Network.Ethernet)
+    (Pcap.Network.of_int32 (Pcap.BE.get_pcap_header_network header));
+  (* "valid enough" if a reader can be inferred from the header *)
+  match Pcap.detect header with
+  | Some inferred_reader -> Lwt.return_unit
+  | None -> OUnit.assert_failure "Couldn't infer a reader from a file header we
+              wrote ourselves"
 
 (* create_packet_header: 
    throws exc for too small a buffer,
@@ -56,6 +78,7 @@ let lwt_run f () = Lwt_main.run (f ())
 let () =
   let create_file_header = [
     "exn_too_small", `Quick, lwt_run exn_too_small;
+    "big_enough_gets_sensible_header", `Quick, lwt_run big_enough_gets_sensible_header
   ] in
   let create_packet_header = [
 
