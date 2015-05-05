@@ -91,7 +91,25 @@ let packet_header_correct_big_packet () =
    created file is readable
    created file contains a readable pcap file header 
    created file contains a readable pcap file header with the correct endianness
+
+   for a lot of cases, this will just be "trying to write a header returns the
+   same result as a generic FS.write operation", with the wrinkle that we don't
+   have a request for overwrite in FS.write
 *)
+
+let create_pcap_file_errors_out () =
+  (* TODO: given an error, make a module compliant with V1.FS 
+     that returns that error for all potentially errorful operations *)
+  (* Do we need metaprogramming for this? *)
+  let module Writer = Pcap_write.Make(Pcap.BE)
+      (Errorful_writers.Not_a_directory) in
+  (Writer.create_pcap_file (Errorful_writers.Not_a_directory.connect)
+     "nowhere") >>= function
+    | `Ok () -> OUnit.assert_failure "create_pcap_file falsely claimed success when it's
+    impossible"
+    | `Error (`Not_a_directory _) -> Lwt.return_unit
+    | `Error _ -> OUnit.assert_failure "create_pcap_file returned an error type
+    different from what the underlying FS returned"
 
 (* append_packet_to_file:
    what are the correct semantics for a zero-length packet?  
@@ -121,6 +139,7 @@ let () =
     "packet_header_correct_big_packet", `Quick, lwt_run packet_header_correct_big_packet;
   ] in
   let create_pcap_file = [
+    "create_pcap_file_errors_out", `Quick, lwt_run create_pcap_file_errors_out;
 
   ] in
   let append_packet_to_file = [
