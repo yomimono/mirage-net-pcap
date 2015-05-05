@@ -64,14 +64,24 @@ let packet_header_exn_too_small () =
   Lwt.return_unit
 
 let packet_header_correct_values () =
+  let printer p = string_of_int (Int32.to_int p) in
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let header = Cstruct.create 16 in
   let header = zero_cstruct header in
   Writer.create_packet_header header 1.2 4096;
-  OUnit.assert_equal 1l (Pcap.BE.get_pcap_packet_ts_sec header);
-  OUnit.assert_equal 200000l (Pcap.BE.get_pcap_packet_ts_sec header);
-  OUnit.assert_equal 4096l (Pcap.BE.get_pcap_packet_incl_len header);
-  OUnit.assert_equal 4096l (Pcap.BE.get_pcap_packet_orig_len header);
+  OUnit.assert_equal ~printer 1l (Pcap.BE.get_pcap_packet_ts_sec header);
+  OUnit.assert_equal ~printer 200000l (Pcap.BE.get_pcap_packet_ts_usec header);
+  OUnit.assert_equal ~printer 4096l (Pcap.BE.get_pcap_packet_incl_len header);
+  OUnit.assert_equal ~printer 4096l (Pcap.BE.get_pcap_packet_orig_len header);
+  Lwt.return_unit
+
+let packet_header_correct_big_packet () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let header = Cstruct.create 16 in
+  let header = zero_cstruct header in
+  Writer.create_packet_header header 1.2 65536;
+  OUnit.assert_equal 65535l (Pcap.BE.get_pcap_packet_incl_len header);
+  OUnit.assert_equal 65536l (Pcap.BE.get_pcap_packet_orig_len header);
   Lwt.return_unit
 
 (* create_pcap_file: 
@@ -107,6 +117,8 @@ let () =
   ] in
   let create_packet_header = [
     "packet_header_exn_too_small", `Quick, lwt_run packet_header_exn_too_small;
+    "packet_header_correct_values", `Quick, lwt_run packet_header_correct_values;
+    "packet_header_correct_big_packet", `Quick, lwt_run packet_header_correct_big_packet;
   ] in
   let create_pcap_file = [
 
