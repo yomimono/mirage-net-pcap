@@ -123,7 +123,6 @@ module Make
     (* things supplied to write are not necessarily page-aligned *)
     let page = Io_page.get 1 in
     let header = Io_page.to_cstruct page in
-    let header_size = 16 in
     let fs, file = t.source.source, t.source.write in
     W.append_packet_to_file fs file t.write_seek (Clock.time ()) header
     >>= function
