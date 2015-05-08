@@ -19,7 +19,7 @@ Executable test_pcap_writes
   Install:            false
   MainIs:             test_pcap_writes.ml
   Build$:             flag(tests)
-  BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix
+  BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix, mirage-types
 
 Test pcap_writes
   Run$: flag(tests)
