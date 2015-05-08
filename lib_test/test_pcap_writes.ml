@@ -183,7 +183,10 @@ let create_pcap_file_makes_file_header () =
       match Pcap.detect contents with
       | None -> OUnit.assert_failure "Couldn't autodetect endianness or make a
       reader based on the written file header"
-      | Some header -> Lwt.return_unit )
+      | Some header -> 
+        let module Reader = (val header) in
+        OUnit.assert_equal ~msg:"endianness test for readback file header" Pcap.Big Reader.endian;
+        Lwt.return_unit )
     | `Ok [] -> OUnit.assert_failure "FS.read returned an empty list"
     | `Ok _ -> OUnit.assert_failure "Got *way* too much data; shouldn't need >1 page"
 
