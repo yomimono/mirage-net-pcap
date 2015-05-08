@@ -57,7 +57,7 @@ let packet_header_exn_too_small () =
       with Invalid_argument _ -> None)
     with
     | Some () -> OUnit.assert_failure 
-                   "Claimed success in writing to a buffer that is too small to contain the full file header"
+         "Claimed success in writing to a buffer that is too small to contain the full file header"
     | None -> ()
   in
   List.iter check_with_length [0; 15];
@@ -85,34 +85,29 @@ let packet_header_correct_big_packet () =
   Lwt.return_unit
 
 (* create_pcap_file: 
-   invalid write cases return the errors we expect 
-   (i.e., is a directory, isn't writeable, etc)
+   invalid write cases return the errors we expect (i.e., is a directory, isn't writeable, etc)
    created file is not empty
    created file is readable
    created file contains a readable pcap file header 
    created file contains a readable pcap file header with the correct endianness
-
-   for a lot of cases, this will just be "trying to write a header returns the
-   same result as a generic FS.write operation", with the wrinkle that we don't
-   have a request for overwrite in FS.write
 *)
-
-let check_create_file_error (module M : Errorful_writers.Errorful_writer) =
-  let module E = Errorful_writers in
-  let module Errorful_fs = E.Make(M) in
-  let module Writer = Pcap_write.Make(Pcap.BE)(Errorful_fs) in
-  (Writer.create_pcap_file (Errorful_fs.connect)
-     "nowhere") >>= function
-    | `Ok () -> OUnit.assert_failure "create_pcap_file falsely claimed success when it's
-    impossible"
-    | `Error e when e = M.error -> Lwt.return_unit
-    | `Error _ -> OUnit.assert_failure "create_pcap_file returned an error type
-    different from what the underlying FS returned"
 
 (* using some stub FS implementations that always return errors,
    verify that Pcap_write.create_pcap_file 
    always passes underlying FS errors up to the caller.  *)
 let create_pcap_file_errors_out () =
+  let check_create_file_error (module M : Errorful_writers.Errorful_writer) =
+    let module E = Errorful_writers in
+    let module Errorful_fs = E.Make(M) in
+    let module Writer = Pcap_write.Make(Pcap.BE)(Errorful_fs) in
+    (Writer.create_pcap_file (Errorful_fs.connect)
+       "nowhere") >>= function
+    | `Ok () -> OUnit.assert_failure "create_pcap_file falsely claimed success when it's
+    impossible"
+    | `Error e when e = M.error -> Lwt.return_unit
+    | `Error _ -> OUnit.assert_failure "create_pcap_file returned an error type
+    different from what the underlying FS returned"
+  in
   check_create_file_error (module Errorful_writers.Not_a_directory) >>= fun () ->
   check_create_file_error (module Errorful_writers.Is_a_directory) >>= fun () ->
   check_create_file_error (module Errorful_writers.Directory_not_empty) >>= fun () ->
@@ -122,7 +117,6 @@ let create_pcap_file_errors_out () =
   check_create_file_error (module Errorful_writers.Format_not_recognised) >>= fun () ->
   check_create_file_error (module Errorful_writers.Unknown_error) >>= fun () ->
   check_create_file_error (module Errorful_writers.Block_device) >>= fun () ->
-  (* all have passed if we reached this point. *)
   Lwt.return_unit
 
 (* append_packet_to_file:
