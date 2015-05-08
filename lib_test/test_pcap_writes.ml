@@ -191,19 +191,63 @@ let create_pcap_file_makes_file_header () =
     | `Ok _ -> OUnit.assert_failure "Got *way* too much data; shouldn't need >1 page"
 
 (* append_packet_to_file:
-   what are the correct semantics for a zero-length packet?  
-   (we need to do better on this generally in mirage;
-   in lots of places, we'll blow up if we receive a packet with valid headers 
-   that encapsulates nothing)
+   we correctly write a zero-length packet (i.e., just header, no data)  
    if we request a write of >1 page size, it all gets written (superjumbo
    frames)
    written packets have the requested time
    written packets have the correct snaplen
    attempting to write to a file that hasn't been "initialized" fails
       (support for appends?)
-   attempting to write when the FS is full results in an error (is this
-   possible?)
+   errors from the FS propagate upward, most importantly No_space
 *)
+
+let append_packet_errors_out () = 
+  let module E = Errorful_writers in
+  let expect_error dirname filename now packet 
+      (module M : Errorful_writers.Errorful_writer) =
+    let module Errorful_fs = E.Make(M) in
+    let module Writer = Pcap_write.Make(Pcap.BE)(Errorful_fs) in
+    Writer.append_packet_to_file (Errorful_fs.connect) 
+      (dirname ^ "/" ^ "filename") (Pcap.sizeof_pcap_header) now packet >>= function 
+    | `Ok _ -> OUnit.assert_failure "append_packet claimed success on an errorful FS"
+    | `Error e when e = M.error -> Lwt.return_unit
+    | `Error _ -> OUnit.assert_failure "append_packet returned an error that
+    isn't the error its FS gave it"
+  in
+  let now = Clock.time () in
+  let dirname = ("append_packet-" ^ (string_of_float now)) in
+  let filename = "errors_out" in
+  let packet = Cstruct.of_string "photograph of a cat.png" in
+  let expect_error = expect_error dirname filename now packet in
+  expect_error (module E.Not_a_directory) >>= fun () -> 
+  expect_error (module E.Is_a_directory) >>= fun () ->
+  expect_error (module E.Directory_not_empty) >>= fun () ->
+  expect_error (module E.No_directory_entry) >>= fun () ->
+  expect_error (module E.File_already_exists) >>= fun () ->
+  expect_error (module E.No_space) >>= fun () ->
+  expect_error (module E.Format_not_recognised) >>= fun () ->
+  expect_error (module E.Unknown_error) >>= fun () ->
+  expect_error (module E.Block_device) >>= fun () ->
+  Lwt.return_unit
+
+let append_packet_allows_zero_length () = 
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("append_packet-" ^ (string_of_float now)) in
+  let filename = "allows_zero_length" in
+  let packet = Cstruct.create 0 in
+  try_make_file now dirname filename >>= fun fs ->
+  Writer.append_packet_to_file fs 
+    (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header) now packet >>= function
+  | `Error _ -> OUnit.assert_failure "Couldn't write a zero-length packet"
+  | `Ok n -> 
+    OUnit.assert_equal ~printer:string_of_int Pcap.sizeof_pcap_packet n;
+    Lwt.return_unit
+
+let append_packet_has_correct_time () = Lwt.return_unit
+let append_packet_has_correct_snaplen () = Lwt.return_unit
+let append_packet_preserves_data () = Lwt.return_unit
+let append_packet_handles_big_packets () = Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -224,7 +268,12 @@ let () =
     "create_pcap_file_makes_file_header", `Quick, lwt_run create_pcap_file_makes_file_header;
   ] in
   let append_packet_to_file = [
-
+    "append_packet_errors_out", `Quick, lwt_run append_packet_errors_out;
+    "append_packet_allows_zero_length", `Quick, lwt_run append_packet_allows_zero_length;
+    "append_packet_preserves_data", `Quick, lwt_run append_packet_preserves_data;
+    "append_packet_has_correct_time", `Quick, lwt_run append_packet_has_correct_time;
+    "append_packet_has_correct_snaplen", `Quick, lwt_run append_packet_has_correct_snaplen;
+    "append_packet_handles_big_packets", `Quick, lwt_run append_packet_handles_big_packets;
   ] in
   Alcotest.run "Pcap_writer" [
     "create_file_header", create_file_header;
