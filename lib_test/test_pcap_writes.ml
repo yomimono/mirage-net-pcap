@@ -119,6 +119,74 @@ let create_pcap_file_errors_out () =
   check_create_file_error (module Errorful_writers.Block_device) >>= fun () ->
   Lwt.return_unit
 
+let try_make_file now dirname filename =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  FS_unix.connect "test_fs" >>= function
+  | `Error _ -> OUnit.assert_failure "Couldn't use test_fs for filesystem testing"
+  | `Ok fs ->
+    FS_unix.mkdir fs dirname >>= function
+    | `Error `No_space -> OUnit.assert_failure "No space on the filesystem; testing can't continue"
+    | `Error (`Is_a_directory _) 
+    | `Error (`File_already_exists _) -> 
+      OUnit.assert_failure "Tried to make a unique directory, but it already exists."
+    | `Error _ -> 
+      OUnit.assert_failure (Printf.sprintf "A surprising error occurred when we
+      called mkdir on %s ); can't continue testing" dirname)
+    | `Ok () -> 
+      Writer.create_pcap_file fs (dirname ^ "/" ^ filename)
+      >>= function
+      | `Error _ -> OUnit.assert_failure "create_pcap_writer reported an error
+      writing a test file with a header in it"
+      | `Ok () -> Lwt.return fs
+
+let create_pcap_file_makes_nonempty_file () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
+  let filename = "makes_nonempty_file.pcap" in
+  try_make_file now dirname filename >>= fun fs ->
+  FS_unix.size fs (dirname ^ "/" ^ filename) >>= function
+  | `Ok n when n > Int64.zero -> Lwt.return_unit
+  | `Ok n -> OUnit.assert_failure "create_pcap_file wrote an empty file"
+  | `Error _ -> OUnit.assert_failure "managed to write without error, but
+                        couldn't assess the size of the written file?"
+
+let create_pcap_file_makes_readable_file () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
+  let filename = "makes_readable_file.pcap" in
+  try_make_file now dirname filename >>= fun fs ->
+  FS_unix.read fs (dirname ^ "/" ^ filename) 0 24 >>= function
+  | `Ok _contents -> Lwt.return_unit (* not checking contents, just readability *)
+  | `Error (`Is_a_directory _) -> OUnit.assert_failure "tried to read a directory"
+  | `Error _ -> 
+    (* none of the other error types seem to make very much sense for reads. *)
+    OUnit.assert_failure "Failed to read back the contents of create_pcap_file"
+
+let create_pcap_file_makes_file_header () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
+  let filename = "makes_file_header.pcap" in
+  try_make_file now dirname filename >>= fun fs ->
+  FS_unix.size fs (dirname ^ "/" ^ filename) >>= function
+  | `Error _ -> OUnit.assert_failure "couldn't get size of file header"
+  | `Ok size ->
+    OUnit.assert_equal ~msg:"readback file size" ~printer:string_of_int (Pcap.sizeof_pcap_header) (Int64.to_int size);
+    FS_unix.read fs (dirname ^ "/" ^ filename) 0 (Int64.to_int size) >>= function
+    | `Error (`Is_a_directory _) -> OUnit.assert_failure "tried to read a directory"
+    | `Error _ -> 
+      (* none of the other error types seem to make very much sense for reads. *)
+      OUnit.assert_failure "Failed to read back the contents of create_pcap_file"
+    | `Ok (contents::[]) -> (
+      match Pcap.detect contents with
+      | None -> OUnit.assert_failure "Couldn't autodetect endianness or make a
+      reader based on the written file header"
+      | Some header -> Lwt.return_unit )
+    | `Ok [] -> OUnit.assert_failure "FS.read returned an empty list"
+    | `Ok _ -> OUnit.assert_failure "Got *way* too much data; shouldn't need >1 page"
+
 (* append_packet_to_file:
    what are the correct semantics for a zero-length packet?  
    (we need to do better on this generally in mirage;
@@ -148,7 +216,9 @@ let () =
   ] in
   let create_pcap_file = [
     "create_pcap_file_errors_out", `Quick, lwt_run create_pcap_file_errors_out;
-
+    "create_pcap_file_makes_nonempty_file", `Quick, lwt_run create_pcap_file_makes_nonempty_file;
+    "create_pcap_file_makes_readable_file", `Quick, lwt_run create_pcap_file_makes_readable_file;
+    "create_pcap_file_makes_file_header", `Quick, lwt_run create_pcap_file_makes_file_header;
   ] in
   let append_packet_to_file = [
 
