@@ -98,9 +98,6 @@ let packet_header_correct_big_packet () =
 *)
 
 let create_pcap_file_errors_out () =
-  (* TODO: given an error, make a module compliant with V1.FS 
-     that returns that error for all potentially errorful operations *)
-  (* Do we need metaprogramming for this? *)
   let module Never_directory =
     Errorful_writers.Make(Errorful_writers.Not_a_directory) 
   in
