@@ -101,9 +101,12 @@ let create_pcap_file_errors_out () =
   (* TODO: given an error, make a module compliant with V1.FS 
      that returns that error for all potentially errorful operations *)
   (* Do we need metaprogramming for this? *)
+  let module Never_directory =
+    Errorful_writers.Make(Errorful_writers.Not_a_directory) 
+  in
   let module Writer = Pcap_write.Make(Pcap.BE)
-      (Errorful_writers.Not_a_directory) in
-  (Writer.create_pcap_file (Errorful_writers.Not_a_directory.connect)
+      (Never_directory) in
+  (Writer.create_pcap_file (Never_directory.connect)
      "nowhere") >>= function
     | `Ok () -> OUnit.assert_failure "create_pcap_file falsely claimed success when it's
     impossible"
