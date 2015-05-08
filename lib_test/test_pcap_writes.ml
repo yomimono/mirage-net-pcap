@@ -97,19 +97,33 @@ let packet_header_correct_big_packet () =
    have a request for overwrite in FS.write
 *)
 
-let create_pcap_file_errors_out () =
-  let module Never_directory =
-    Errorful_writers.Make(Errorful_writers.Not_a_directory) 
-  in
-  let module Writer = Pcap_write.Make(Pcap.BE)
-      (Never_directory) in
-  (Writer.create_pcap_file (Never_directory.connect)
+let check_create_file_error (module M : Errorful_writers.Errorful_writer) =
+  let module E = Errorful_writers in
+  let module Errorful_fs = E.Make(M) in
+  let module Writer = Pcap_write.Make(Pcap.BE)(Errorful_fs) in
+  (Writer.create_pcap_file (Errorful_fs.connect)
      "nowhere") >>= function
     | `Ok () -> OUnit.assert_failure "create_pcap_file falsely claimed success when it's
     impossible"
-    | `Error (`Not_a_directory _) -> Lwt.return_unit
+    | `Error e when e = M.error -> Lwt.return_unit
     | `Error _ -> OUnit.assert_failure "create_pcap_file returned an error type
     different from what the underlying FS returned"
+
+(* using some stub FS implementations that always return errors,
+   verify that Pcap_write.create_pcap_file 
+   always passes underlying FS errors up to the caller.  *)
+let create_pcap_file_errors_out () =
+  check_create_file_error (module Errorful_writers.Not_a_directory) >>= fun () ->
+  check_create_file_error (module Errorful_writers.Is_a_directory) >>= fun () ->
+  check_create_file_error (module Errorful_writers.Directory_not_empty) >>= fun () ->
+  check_create_file_error (module Errorful_writers.No_directory_entry) >>= fun () ->
+  check_create_file_error (module Errorful_writers.File_already_exists) >>= fun () ->
+  check_create_file_error (module Errorful_writers.No_space) >>= fun () ->
+  check_create_file_error (module Errorful_writers.Format_not_recognised) >>= fun () ->
+  check_create_file_error (module Errorful_writers.Unknown_error) >>= fun () ->
+  check_create_file_error (module Errorful_writers.Block_device) >>= fun () ->
+  (* all have passed if we reached this point. *)
+  Lwt.return_unit
 
 (* append_packet_to_file:
    what are the correct semantics for a zero-length packet?  

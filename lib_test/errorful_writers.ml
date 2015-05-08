@@ -56,6 +56,7 @@ end
 module Make (E: Errorful_writer) : sig
   include V1.FS with type 'a io = 'a Lwt.t 
                  and type page_aligned_buffer = Cstruct.t
+                 and type block_device_error = string
   val connect : t
   val disconnect : t -> unit Lwt.t
 end = struct
@@ -72,11 +73,13 @@ end
 module Not_a_directory = struct let error = `Not_a_directory "Not_a_directory" end
 module Is_a_directory = struct let error = `Is_a_directory "Is_a_directory" end
 module Directory_not_empty = struct let error = `Directory_not_empty "Directory_not_empty" end
-module No_directory_entry = struct let error = `No_directory_entry
-                                       "No_directory_entry" "No_directory_entry" end
 module No_space = struct let error = `No_space end
 module Format_not_recognised = struct let error = `Format_not_recognised
                                           "Format_not_recognised" end
 module Unknown_error = struct let error = `Unknown_error "Unknown_error" end
+module File_already_exists = struct let error = `File_already_exists "File_already_exists" end
 module Block_device = struct let error = `Block_device "Block_device" end
+module No_directory_entry = struct 
+  let error = `No_directory_entry ("No_directory_entry", "No_directory_entry")
+end
 
