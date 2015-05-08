@@ -246,7 +246,25 @@ let append_packet_allows_zero_length () =
 
 let append_packet_has_correct_time () = Lwt.return_unit
 let append_packet_has_correct_snaplen () = Lwt.return_unit
-let append_packet_preserves_data () = Lwt.return_unit
+let append_packet_preserves_data () = 
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("append_packet-" ^ (string_of_float now)) in
+  let filename = "preserves_data" in
+  let packet = Cstruct.of_string "super important data do not lose" in
+  try_make_file now dirname filename >>= fun fs ->
+  Writer.append_packet_to_file fs 
+    (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header) now packet >>= function
+  | `Error _ -> OUnit.assert_failure "Couldn't append a short test packet"
+  | `Ok n -> 
+    FS_unix.read fs (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header)
+      (Cstruct.len packet) >>= function
+    | `Error _ -> OUnit.assert_failure "Couldn't read back the file after packet
+                    append"
+    | `Ok [] -> OUnit.assert_failure "file read returned empty list"
+    | `Ok (buf::_::_) -> OUnit.assert_failure "file read returned way too much data"
+    | `Ok (buf::[]) -> OUnit.assert_equal ~printer:Cstruct.to_string packet buf; Lwt.return_unit
+
 let append_packet_handles_big_packets () = Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
