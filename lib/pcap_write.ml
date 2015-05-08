@@ -45,7 +45,6 @@ module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
       let header = Cstruct.create Pcap.sizeof_pcap_header in
       create_file_header header;
       FS.write fs file 0 header
-  (* TODO: let our own errors reflect the possible errors in V1_LWT.FS *)
 
   let create_packet_header header time packet_size =
     Pcap_impl.set_pcap_packet_ts_sec header (Int32.of_float time);
