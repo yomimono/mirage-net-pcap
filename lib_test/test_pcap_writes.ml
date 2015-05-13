@@ -252,6 +252,48 @@ let append_packet_preserves_data () =
                                                             (List.hd packets));
       Lwt.return_unit
 
+let append_packet_handles_big_packets () =
+  let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
+  let now = Clock.time () in
+  let dirname = ("append_packet-" ^ (string_of_float now)) in
+  let filename = "big_packets" in
+  let packet = zero_cstruct (Cstruct.create 65536) in
+  try_make_file now dirname filename >>= fun fs ->
+  Writer.append_packet_to_file fs (dirname ^ "/" ^ filename)
+    (Pcap.sizeof_pcap_header) now packet >>= or_fail >>= fun _ ->
+  FS_unix.read fs (dirname ^ "/" ^ filename) 0 65560 >>= or_fail >>= function
+  | [] -> OUnit.assert_failure "large packet read got an empty buffer"
+  | bufs ->
+    let combine_cstructs l =
+      match l with
+      | hd :: [] -> hd
+      | _ ->
+        let consolidated = Cstruct.create (Cstruct.lenv l) in
+        let fill read_seek buf =
+          Cstruct.blit buf 0 consolidated read_seek (Cstruct.len buf);
+          read_seek + (Cstruct.len buf)
+        in
+        ignore (List.fold_left fill 0 l);
+        consolidated
+    in
+    let buf = combine_cstructs bufs in
+    match Pcap.detect buf with
+    | None -> OUnit.assert_failure "large packet read gave an unparseable file"
+    | Some r -> let module Reader = (val r) in
+      let iterator = Pcap.packets r (Cstruct.shift buf Pcap.sizeof_pcap_header) in
+      let (headers, bodies) = Cstruct.fold (fun (hs, bs) (header, body) ->
+          header::hs, body::bs
+        ) iterator ([], []) in
+      let printer = string_of_int in
+      OUnit.assert_equal ~printer 1 (List.length headers);
+      OUnit.assert_equal ~printer 1 (List.length bodies);
+      OUnit.assert_equal ~printer:Int32.to_string 65535l 
+        (Reader.get_pcap_packet_incl_len (List.hd headers));
+      OUnit.assert_equal ~printer:Int32.to_string 65536l 
+        (Reader.get_pcap_packet_orig_len (List.hd headers));
+      OUnit.assert_equal ~printer 65535 (Cstruct.len (List.hd bodies));
+      Lwt.return_unit
+
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
@@ -274,11 +316,7 @@ let () =
     "append_packet_errors_out", `Quick, lwt_run append_packet_errors_out;
     "append_packet_allows_zero_length", `Quick, lwt_run append_packet_allows_zero_length;
     "append_packet_preserves_data", `Quick, lwt_run append_packet_preserves_data;
-    (*
-    "append_packet_has_correct_time", `Quick, lwt_run append_packet_has_correct_time;
-    "append_packet_has_correct_snaplen", `Quick, lwt_run append_packet_has_correct_snaplen;
     "append_packet_handles_big_packets", `Quick, lwt_run append_packet_handles_big_packets; 
-    *)
   ] in
   Alcotest.run "Pcap_writer" [
     "create_file_header", create_file_header;
