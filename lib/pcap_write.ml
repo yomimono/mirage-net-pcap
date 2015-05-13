@@ -57,14 +57,15 @@ module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
     let (>>=) = Lwt.bind in
     let header_size = Pcap.sizeof_pcap_packet in
     let packet_size = Cstruct.len packet in
+    let copy_size = min 65535 packet_size in
     (* TODO: shouldn't claim we wrote > 65535 bytes; if we do that, the caller
        will advance the seek pointer further than we actually wrote *)
     (* also, shouldn't attempt to write >65535 bytes of data! *)
-    let header = Cstruct.create (header_size + packet_size) in
+    let header = Cstruct.create (header_size + copy_size) in
     create_packet_header header time packet_size;
-    Cstruct.blit packet 0 header header_size packet_size;
+    Cstruct.blit packet 0 header header_size copy_size;
     FS.write fs file offset header >>= function
-    | `Ok () -> Lwt.return (`Ok (header_size + packet_size))
+    | `Ok () -> Lwt.return (`Ok (header_size + copy_size))
     | `Error q -> Lwt.return (`Error q)
 
 end
