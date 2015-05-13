@@ -126,7 +126,7 @@ module Make
     let fs, file = t.source.source, t.source.write in
     W.append_packet_to_file fs file t.write_seek (Clock.time ()) header
     >>= function
-    | `Error p -> Lwt.return_unit(* TODO: raise an exception *)
+    | `Error p -> Lwt.return_unit(* TODO: something less broken *)
     | `Ok bytes_written ->
       t.write_seek <- t.write_seek + bytes_written;
       Lwt.return_unit
