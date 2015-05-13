@@ -1,7 +1,7 @@
 OASISFormat: 0.4
 Name:        mirage-net-pcap
 Version:     0.0.1
-Synopsis:    PCAP reader (via fs) represented as a Xen netif
+Synopsis:    PCAP reader (via fs) represented as a netif for use in mirage
 Authors:     Mindy Preston
 License:     ISC
 Plugins:     META (0.4), DevFiles (0.4)
@@ -12,14 +12,15 @@ Library "mirage-net-pcap"
   Path:               lib
   Findlibname:        mirage-net-pcap
   Modules:            Netif, Pcap_write
-  BuildDepends:       mirage-types, io-page, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile 
+  BuildDepends:       mirage-types, io-page, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile, bisect_ppx
 
 Executable test_pcap_writes
   Path:               lib_test/
   Install:            false
   MainIs:             test_pcap_writes.ml
+  Custom:             true
   Build$:             flag(tests)
-  BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix, mirage-types, mirage-clock-unix
+  BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix, mirage-types, mirage-clock-unix, bisect_ppx
 
 Test pcap_writes
   Run$: flag(tests)
