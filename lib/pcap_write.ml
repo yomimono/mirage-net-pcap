@@ -55,8 +55,11 @@ module Make (Pcap_impl : Pcap.HDR) (FS : V1_LWT.FS with type page_aligned_buffer
 
   let append_packet_to_file fs file offset time packet =
     let (>>=) = Lwt.bind in
-    let header_size = 4*4 in (* W doesn't give us sizeof_pcap_packet *)
+    let header_size = Pcap.sizeof_pcap_packet in
     let packet_size = Cstruct.len packet in
+    (* TODO: shouldn't claim we wrote > 65535 bytes; if we do that, the caller
+       will advance the seek pointer further than we actually wrote *)
+    (* also, shouldn't attempt to write >65535 bytes of data! *)
     let header = Cstruct.create (header_size + packet_size) in
     create_packet_header header time packet_size;
     Cstruct.blit packet 0 header header_size packet_size;
