@@ -10,6 +10,10 @@ let zero_cstruct cs =
   let i = Cstruct.iter (fun c -> Some 1) zero cs in
   Cstruct.fold (fun b a -> b) i cs
 
+let or_fail = function
+  | `Error e -> OUnit.assert_failure (FS_unix.string_of_error e)
+  | `Ok q -> Lwt.return q
+
 let file_header_exn_too_small () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let check_with_length length =
@@ -121,23 +125,10 @@ let create_pcap_file_errors_out () =
 
 let try_make_file now dirname filename =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
-  FS_unix.connect "test_fs" >>= function
-  | `Error _ -> OUnit.assert_failure "Couldn't use test_fs for filesystem testing"
-  | `Ok fs ->
-    FS_unix.mkdir fs dirname >>= function
-    | `Error `No_space -> OUnit.assert_failure "No space on the filesystem; testing can't continue"
-    | `Error (`Is_a_directory _) 
-    | `Error (`File_already_exists _) -> 
-      OUnit.assert_failure "Tried to make a unique directory, but it already exists."
-    | `Error _ -> 
-      OUnit.assert_failure (Printf.sprintf "A surprising error occurred when we
-      called mkdir on %s ); can't continue testing" dirname)
-    | `Ok () -> 
-      Writer.create_pcap_file fs (dirname ^ "/" ^ filename)
-      >>= function
-      | `Error _ -> OUnit.assert_failure "create_pcap_writer reported an error
-      writing a test file with a header in it"
-      | `Ok () -> Lwt.return fs
+  FS_unix.connect "test_fs" >>= or_fail >>= fun fs -> 
+  FS_unix.mkdir fs dirname >>= or_fail >>= fun () ->
+  Writer.create_pcap_file fs (dirname ^ "/" ^ filename) >>= or_fail >>= fun () ->
+  Lwt.return fs
 
 let create_pcap_file_makes_nonempty_file () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
@@ -145,11 +136,9 @@ let create_pcap_file_makes_nonempty_file () =
   let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
   let filename = "makes_nonempty_file.pcap" in
   try_make_file now dirname filename >>= fun fs ->
-  FS_unix.size fs (dirname ^ "/" ^ filename) >>= function
-  | `Ok n when n > Int64.zero -> Lwt.return_unit
-  | `Ok n -> OUnit.assert_failure "create_pcap_file wrote an empty file"
-  | `Error _ -> OUnit.assert_failure "managed to write without error, but
-                        couldn't assess the size of the written file?"
+  FS_unix.size fs (dirname ^ "/" ^ filename) >>= or_fail >>= fun n ->
+  OUnit.assert_equal false (0 = (Int64.compare n Int64.zero));
+  Lwt.return_unit
 
 let create_pcap_file_makes_readable_file () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
@@ -157,12 +146,8 @@ let create_pcap_file_makes_readable_file () =
   let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
   let filename = "makes_readable_file.pcap" in
   try_make_file now dirname filename >>= fun fs ->
-  FS_unix.read fs (dirname ^ "/" ^ filename) 0 24 >>= function
-  | `Ok _contents -> Lwt.return_unit (* not checking contents, just readability *)
-  | `Error (`Is_a_directory _) -> OUnit.assert_failure "tried to read a directory"
-  | `Error _ -> 
-    (* none of the other error types seem to make very much sense for reads. *)
-    OUnit.assert_failure "Failed to read back the contents of create_pcap_file"
+  FS_unix.read fs (dirname ^ "/" ^ filename) 0 24 >>= or_fail >>= 
+  fun _ -> Lwt.return_unit (* not checking contents, just readability *)
 
 let create_pcap_file_makes_file_header () =
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
@@ -170,16 +155,11 @@ let create_pcap_file_makes_file_header () =
   let dirname = ("create_pcap_file-" ^ (string_of_float now)) in
   let filename = "makes_file_header.pcap" in
   try_make_file now dirname filename >>= fun fs ->
-  FS_unix.size fs (dirname ^ "/" ^ filename) >>= function
-  | `Error _ -> OUnit.assert_failure "couldn't get size of file header"
-  | `Ok size ->
-    OUnit.assert_equal ~msg:"readback file size" ~printer:string_of_int (Pcap.sizeof_pcap_header) (Int64.to_int size);
-    FS_unix.read fs (dirname ^ "/" ^ filename) 0 (Int64.to_int size) >>= function
-    | `Error (`Is_a_directory _) -> OUnit.assert_failure "tried to read a directory"
-    | `Error _ -> 
-      (* none of the other error types seem to make very much sense for reads. *)
-      OUnit.assert_failure "Failed to read back the contents of create_pcap_file"
-    | `Ok (contents::[]) -> (
+  FS_unix.size fs (dirname ^ "/" ^ filename) >>= or_fail >>= fun size ->
+  OUnit.assert_equal ~msg:"readback file size" ~printer:string_of_int (Pcap.sizeof_pcap_header) (Int64.to_int size);
+  FS_unix.read fs (dirname ^ "/" ^ filename) 0 (Int64.to_int size) 
+  >>= or_fail >>= function
+  | (contents::[]) -> (
       match Pcap.detect contents with
       | None -> OUnit.assert_failure "Couldn't autodetect endianness or make a
       reader based on the written file header"
@@ -187,8 +167,8 @@ let create_pcap_file_makes_file_header () =
         let module Reader = (val header) in
         OUnit.assert_equal ~msg:"endianness test for readback file header" Pcap.Big Reader.endian;
         Lwt.return_unit )
-    | `Ok [] -> OUnit.assert_failure "FS.read returned an empty list"
-    | `Ok _ -> OUnit.assert_failure "Got *way* too much data; shouldn't need >1 page"
+  | [] -> OUnit.assert_failure "FS.read returned an empty list"
+  | _ -> OUnit.assert_failure "Got *way* too much data; shouldn't need >1 page"
 
 (* append_packet_to_file:
    we correctly write a zero-length packet (i.e., just header, no data)  
@@ -244,8 +224,6 @@ let append_packet_allows_zero_length () =
     OUnit.assert_equal ~printer:string_of_int Pcap.sizeof_pcap_packet n;
     Lwt.return_unit
 
-let append_packet_has_correct_time () = Lwt.return_unit
-let append_packet_has_correct_snaplen () = Lwt.return_unit
 let append_packet_preserves_data () = 
   let module Writer = Pcap_write.Make(Pcap.BE)(FS_unix) in
   let now = Clock.time () in
@@ -254,18 +232,25 @@ let append_packet_preserves_data () =
   let packet = Cstruct.of_string "super important data do not lose" in
   try_make_file now dirname filename >>= fun fs ->
   Writer.append_packet_to_file fs 
-    (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header) now packet >>= function
-  | `Error _ -> OUnit.assert_failure "Couldn't append a short test packet"
-  | `Ok n -> 
-    FS_unix.read fs (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header)
-      (Cstruct.len packet) >>= function
-    | `Error _ -> OUnit.assert_failure "Couldn't read back the file after packet
-                    append"
-    | `Ok [] -> OUnit.assert_failure "file read returned empty list"
-    | `Ok (buf::_::_) -> OUnit.assert_failure "file read returned way too much data"
-    | `Ok (buf::[]) -> OUnit.assert_equal ~printer:Cstruct.to_string packet buf; Lwt.return_unit
-
-let append_packet_handles_big_packets () = Lwt.return_unit
+    (dirname ^ "/" ^ filename) (Pcap.sizeof_pcap_header) now packet >>= or_fail
+  >>= fun n ->
+  FS_unix.read fs (dirname ^ "/" ^ filename) 0 4096 >>= or_fail >>= function
+  | [] -> OUnit.assert_failure "file read returned empty list"
+  | (buf::_::_) -> OUnit.assert_failure "file read returned way too much data"
+  | (buf::[]) -> 
+    match Pcap.detect buf with
+    | None -> OUnit.assert_failure "written file was unreadable by the PCAP parser"
+    | Some r -> let module Reader = (val r) in
+      let iterator = Pcap.packets r (Cstruct.shift buf Pcap.sizeof_pcap_header) in
+      let packets = 
+        Cstruct.fold (fun l (header, body) -> 
+            body :: l
+          ) iterator [] in
+      OUnit.assert_equal ~printer:string_of_int 1 (List.length packets);
+      OUnit.assert_equal 
+        ~printer:(fun a -> a) (Cstruct.to_string packet) (Cstruct.to_string
+                                                            (List.hd packets));
+      Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -289,9 +274,11 @@ let () =
     "append_packet_errors_out", `Quick, lwt_run append_packet_errors_out;
     "append_packet_allows_zero_length", `Quick, lwt_run append_packet_allows_zero_length;
     "append_packet_preserves_data", `Quick, lwt_run append_packet_preserves_data;
+    (*
     "append_packet_has_correct_time", `Quick, lwt_run append_packet_has_correct_time;
     "append_packet_has_correct_snaplen", `Quick, lwt_run append_packet_has_correct_snaplen;
-    "append_packet_handles_big_packets", `Quick, lwt_run append_packet_handles_big_packets;
+    "append_packet_handles_big_packets", `Quick, lwt_run append_packet_handles_big_packets; 
+    *)
   ] in
   Alcotest.run "Pcap_writer" [
     "create_file_header", create_file_header;
