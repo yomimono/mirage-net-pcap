@@ -20,7 +20,7 @@ module Make
     (T: V1_LWT.TIME) 
     (Clock: V1.CLOCK) = struct
   type 'a io = 'a Lwt.t
-  type page_aligned_buffer = Io_page.t
+  type page_aligned_buffer = Cstruct.t
   type buffer = Cstruct.t
   type macaddr = Macaddr.t
   type error = [ `Unimplemented
@@ -58,6 +58,17 @@ module Make
     pcap_reader: (module Pcap.HDR)
   }
 
+  let translate_error = function
+    | `Not_a_directory s -> `Unknown ("Not a directory: " ^ s)
+    | `Is_a_directory s -> `Unknown ("Is a directory: " ^ s)
+    | `Directory_not_empty s -> `Unknown ("Directory not empty: " ^ s)
+    | `No_directory_entry (_, file) -> `Unknown ("Could not find: " ^ file)
+    | `File_already_exists s -> `Unknown ("File already exists: " ^ s)
+    | `No_space -> `Unknown "No space"
+    | `Format_not_recognised s -> `Unknown ("Format not recognised: " ^s)
+    | `Unknown_error s -> `Unknown s
+    | `Block_device _ -> `Unknown "Block device error"
+
   let reset_stats_counters t = ()
   let get_stats_counters t = t.stats
   let empty_stats_counter = {
@@ -81,33 +92,39 @@ module Make
   let id t = t.source
   let connect (i : id) =
     let open Lwt in
-    FS.read i.source i.read 0 (Pcap.sizeof_pcap_header) >>= function
-    | `Error _ -> Lwt.return (`Error (`Unknown "file could not be read") )
-    | `Ok [] -> Lwt.return (`Error (`Unknown "empty file"))
-    (* complete header should fit easily in the first page for any reasonable
+    FS.stat i.source i.write >>= function
+    (* refuse to overwrite a file that already exists *)
+    | `Ok _ -> Lwt.return (`Error (`Unknown "requested write file exists"))
+    | `Error _ ->
+      (* either not present or writes will fail for a reason we'll later
+         discover, so go on with it *)
+      FS.read i.source i.read 0 (Pcap.sizeof_pcap_header) >>= function
+      | `Error p -> Lwt.return (`Error (translate_error p))
+      | `Ok [] -> Lwt.return (`Error (`Unknown "empty file could not be parsed"))
+      (* complete header should fit easily in the first page for any reasonable
          page size, so only consider the first page when attempting to establish
          the parser *)
-    | `Ok (hd :: _) ->
-      match Pcap.detect hd with
-      | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
-      | Some pcap_impl ->
-        let module Reader = (val pcap_impl) in
-        let module Writer = Pcap_write.Make (Reader) (FS) in
-        Writer.create_pcap_file i.source i.write >>= function
-        | `Error p -> Lwt.return (`Error (`Unknown "couldn't write file"))
-        (* by opening the read file first, we can punt on endianness, version,
-           etc  and just use the ones we detected in the source file, since
-           these aren't provided by ocap afaict *)
-        | `Ok () ->
-          Lwt.return (`Ok {
-              source = i;
-              read_seek = Pcap.sizeof_pcap_header;
-              write_seek = Pcap.sizeof_pcap_header;
-              last_read = None;
-              stats = empty_stats_counter;
-              pcap_writer = (module Writer);
-              pcap_reader = (module Reader);
-            })
+      | `Ok (hd :: _) ->
+        match Pcap.detect hd with
+        | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
+        | Some pcap_impl ->
+          let module Reader = (val pcap_impl) in
+          let module Writer = Pcap_write.Make (Reader) (FS) in
+          Writer.create_pcap_file i.source i.write >>= function
+          | `Error p -> Lwt.return (`Error (translate_error p))
+          (* by opening the read file first, we can punt on endianness, version,
+             etc  and just use the ones we detected in the source file, since
+             these aren't provided by ocap afaict *)
+          | `Ok () ->
+            Lwt.return (`Ok {
+                source = i;
+                read_seek = Pcap.sizeof_pcap_header;
+                write_seek = Pcap.sizeof_pcap_header;
+                last_read = None;
+                stats = empty_stats_counter;
+                pcap_writer = (module Writer);
+                pcap_reader = (module Reader);
+              })
 
   let disconnect t =
     Lwt.return_unit
@@ -126,7 +143,7 @@ module Make
     let fs, file = t.source.source, t.source.write in
     W.append_packet_to_file fs file t.write_seek (Clock.time ()) header
     >>= function
-    | `Error p -> Lwt.return_unit(* TODO: something less broken *)
+    | `Error p -> Lwt.return_unit (* TODO: something less broken *)
     | `Ok bytes_written ->
       t.write_seek <- t.write_seek + bytes_written;
       Lwt.return_unit
