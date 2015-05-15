@@ -12,9 +12,13 @@ let mac = Macaddr.of_string_exn "00:16:3e:aa:a2:15"
 
 let timestamp str = (str ^ "-" ^ (string_of_float (Clock.time ())))
 
-let or_error = function
+let fs_or_error = function
   | `Error e -> OUnit.assert_failure (FS_unix.string_of_error e)
   | `Ok q -> Lwt.return q
+
+let netif_or_error ~printer = function
+  | `Error e -> OUnit.assert_failure (printer e)
+  | `Ok n -> Lwt.return n
 
 let fail_on_success str = function
   | `Ok _ -> OUnit.assert_failure str
@@ -25,10 +29,10 @@ let connect_would_overwrite () =
   let module N = Netif.Make(FS_unix)(Time)(Clock) in
   let directory = timestamp "connect_would_overwrite" in
   let file = "file!!!" in
-  FS_unix.connect test_dir >>= or_error >>= fun fs ->
+  FS_unix.connect test_dir >>= fs_or_error >>= fun fs ->
   FS_unix.write fs (directory ^ "/" ^ file) 0 
     (Cstruct.of_string "super important packet trace do not delete")
-     >>= or_error >>= fun () ->
+     >>= fs_or_error >>= fun () ->
   let id = N.id_of_desc ~timing:None ~mac ~source:fs ~read:dhcp_file
       ~write:(directory ^ "/" ^ file) in
   N.connect id >>= fail_on_success "netif.connect overwrote an extant file"
@@ -37,7 +41,7 @@ let connect_read_non_extant () =
   let module N = Netif.Make(FS_unix)(Time)(Clock) in
   let directory = timestamp "connect_read_non_extant" in
   let file = directory ^ "/cats/not there! :)" in
-  FS_unix.connect test_dir >>= or_error >>= fun fs ->
+  FS_unix.connect test_dir >>= fs_or_error >>= fun fs ->
   let id = N.id_of_desc ~timing:None ~mac ~source:fs ~read:file ~write:file in
   N.connect id >>= 
   fail_on_success "netif.connect claimed success for an absent read file"
@@ -46,14 +50,24 @@ let connect_read_not_pcap () =
   let module N = Netif.Make(FS_unix)(Time)(Clock) in
   let directory = timestamp "connect_read_not_pcap" in
   let file = "not_a_pcap.pcap" in
-  FS_unix.connect test_dir >>= or_error >>= fun fs ->
+  FS_unix.connect test_dir >>= fs_or_error >>= fun fs ->
   FS_unix.write fs (directory ^ "/" ^ file) 0 
     (Cstruct.of_string "super important packet trace do not delete") >>=
-  or_error >>= fun () ->
+  fs_or_error >>= fun () ->
   let id = N.id_of_desc ~timing:None ~mac ~source:fs ~read:dhcp_file
       ~write:(directory ^ "/" ^ file) in
   N.connect id >>= fail_on_success "netif.connect claimed success reading a file
     that bears no resemblance to a valid pcap"
+
+let mac_as_requested () =
+  let module N = Netif.Make(FS_unix)(Time)(Clock) in
+  let directory = timestamp "connect_read_not_pcap" in
+  let write = (directory ^ "/nothing.pcap") in
+  FS_unix.connect test_dir >>= fs_or_error >>= fun fs ->
+  let id = N.id_of_desc ~timing:None ~mac ~source:fs ~read:dhcp_file ~write in
+  N.connect id >>= netif_or_error ~printer:N.string_of_error >>= fun netif ->
+  OUnit.assert_equal ~printer:Macaddr.to_string mac (N.mac netif);
+  Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -63,12 +77,14 @@ let () =
     "connect_read_non_extant", `Quick, lwt_run connect_read_non_extant;
     "connect_read_not_pcap", `Quick, lwt_run connect_read_not_pcap;
   ] in
-  let disconnect = [ ] in
   let write = [ ] in
   let listen = [ ] in
-  let mac = [ ] in
+  let mac = [ 
+    "mac_as_requested", `Quick, lwt_run mac_as_requested;
+  ] in
   let get_stats_counters = [ ] in
   let reset_stats_counters = [ ] in
+  let disconnect = [ ] in
   Alcotest.run "Netif" [
     "connect", connect;
     "disconnect", disconnect;
