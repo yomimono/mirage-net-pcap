@@ -69,6 +69,11 @@ module Make
     | `Unknown_error s -> `Unknown s
     | `Block_device _ -> `Unknown "Block device error"
 
+  let string_of_error = function
+    | `Unknown s -> "Unknown error: " ^ s
+    | `Disconnected -> "Disconnected"
+    | `Unimplemented -> "Unimplemented"
+
   let reset_stats_counters t = ()
   let get_stats_counters t = t.stats
   let empty_stats_counter = {

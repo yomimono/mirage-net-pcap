@@ -21,9 +21,10 @@ module Make
     (Clock: V1.CLOCK) : sig
   include V1.NETWORK
     with type 'a io = 'a Lwt.t
-     and type page_aligned_buffer = Io_page.t
      and type buffer = Cstruct.t
      and type macaddr = Macaddr.t
+
+  val string_of_error : error -> string
 
   val connect : id -> [ `Error of error | `Ok of t ] io
 
