@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: e1cfb52ea4e80a06ce18e1f16150e935)
+# DO NOT EDIT (digest: 117d226f91fc3298df728386bbd3a8aa)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -42,12 +42,31 @@ true: annot, bin_annot
 "lib_test/test_pcap_writes.byte": pkg_mirage-types
 "lib_test/test_pcap_writes.byte": pkg_pcap-format
 "lib_test/test_pcap_writes.byte": use_mirage-net-pcap
+"lib_test/test_pcap_writes.byte": custom
+# Executable test_netif
+"lib_test/test_netif.byte": pkg_alcotest
+"lib_test/test_netif.byte": pkg_bisect_ppx
+"lib_test/test_netif.byte": pkg_crunch
+"lib_test/test_netif.byte": pkg_cstruct
+"lib_test/test_netif.byte": pkg_cstruct.syntax
+"lib_test/test_netif.byte": pkg_io-page
+"lib_test/test_netif.byte": pkg_io-page.unix
+"lib_test/test_netif.byte": pkg_ipaddr
+"lib_test/test_netif.byte": pkg_lwt.syntax
+"lib_test/test_netif.byte": pkg_mirage
+"lib_test/test_netif.byte": pkg_mirage-clock-unix
+"lib_test/test_netif.byte": pkg_mirage-fs-unix
+"lib_test/test_netif.byte": pkg_mirage-profile
+"lib_test/test_netif.byte": pkg_mirage-types
+"lib_test/test_netif.byte": pkg_pcap-format
+"lib_test/test_netif.byte": use_mirage-net-pcap
 <lib_test/*.ml{,i,y}>: pkg_alcotest
 <lib_test/*.ml{,i,y}>: pkg_bisect_ppx
 <lib_test/*.ml{,i,y}>: pkg_crunch
 <lib_test/*.ml{,i,y}>: pkg_cstruct
 <lib_test/*.ml{,i,y}>: pkg_cstruct.syntax
 <lib_test/*.ml{,i,y}>: pkg_io-page
+<lib_test/*.ml{,i,y}>: pkg_io-page.unix
 <lib_test/*.ml{,i,y}>: pkg_ipaddr
 <lib_test/*.ml{,i,y}>: pkg_lwt.syntax
 <lib_test/*.ml{,i,y}>: pkg_mirage
@@ -57,5 +76,5 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_mirage-types
 <lib_test/*.ml{,i,y}>: pkg_pcap-format
 <lib_test/*.ml{,i,y}>: use_mirage-net-pcap
-"lib_test/test_pcap_writes.byte": custom
+"lib_test/test_netif.byte": custom
 # OASIS_STOP

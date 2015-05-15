@@ -12,7 +12,7 @@ Library "mirage-net-pcap"
   Path:               lib
   Findlibname:        mirage-net-pcap
   Modules:            Netif, Pcap_write
-  BuildDepends:       mirage-types, io-page, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile, bisect_ppx
+  BuildDepends:       mirage-types, pcap-format, lwt.syntax, cstruct, cstruct.syntax, crunch, ipaddr, mirage-profile, bisect_ppx, io-page
 
 Executable test_pcap_writes
   Path:               lib_test/
@@ -22,6 +22,18 @@ Executable test_pcap_writes
   Build$:             flag(tests)
   BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix, mirage-types, mirage-clock-unix, bisect_ppx
 
+Executable test_netif
+  Path:               lib_test/
+  Install:            false
+  MainIs:             test_netif.ml
+  Custom:             true
+  Build$:             flag(tests)
+  BuildDepends:       alcotest, mirage-net-pcap, mirage, mirage-fs-unix, mirage-types, mirage-clock-unix, bisect_ppx, io-page.unix
+
 Test pcap_writes
   Run$: flag(tests)
   Command: $test_pcap_writes
+
+Test netif
+  Run$: flag(tests)
+  Command: $test_netif
