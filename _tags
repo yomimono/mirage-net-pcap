@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: c734890c4af45ee0830b5410430dffa4)
+# DO NOT EDIT (digest: e1c5e7c7692f498b987f39e236ce0dbe)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -22,7 +22,7 @@ true: annot, bin_annot
 <lib/*.ml{,i,y}>: pkg_io-page
 <lib/*.ml{,i,y}>: pkg_ipaddr
 <lib/*.ml{,i,y}>: pkg_lwt.syntax
-<lib/*.ml{,i,y}>: pkg_mirage
 <lib/*.ml{,i,y}>: pkg_mirage-profile
+<lib/*.ml{,i,y}>: pkg_mirage-types
 <lib/*.ml{,i,y}>: pkg_pcap-format
 # OASIS_STOP
