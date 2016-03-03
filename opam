@@ -17,5 +17,6 @@ depends: [
   "io-page" {>= "1.0.0" }
   "mirage-types" {>= "1.1.0"}
   "ipaddr" {>= "1.0.0"}
+  "mirage-profile"
 ]
 ocaml-version: [>= "4.00.0"]
