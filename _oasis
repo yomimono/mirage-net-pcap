@@ -13,3 +13,16 @@ Library "mirage-net-pcap"
   Findlibname:        mirage-net-pcap
   Modules:            Netif
   BuildDepends:       mirage-types, io-page, pcap-format, lwt.syntax, cstruct, cstruct.syntax, ipaddr, mirage-profile 
+
+Executable test
+  CompiledObject:     best
+  Build$:             flag(tests)
+  install:            false
+  Path:               lib_test/
+  MainIs:             test.ml
+  Custom:             true
+  BuildDepends:       mirage-net-pcap, alcotest, lwt, ipaddr, pcap-format, mirage-unix, mirage-fs-unix
+
+Test test
+  Run$:               flag(tests)
+  Command:            $test -q

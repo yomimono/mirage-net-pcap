@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 25db0f17824b0799f81aaa08d4b7f791) *)
+(* DO NOT EDIT (digest: eb8e8a84f7522593675218a6dfa6fecc) *)
 module OASISGettext = struct
 (* # 22 "src/oasis/OASISGettext.ml" *)
 
@@ -610,7 +610,7 @@ let package_default =
      MyOCamlbuildBase.lib_ocaml = [("mirage-net-pcap", ["lib"], [])];
      lib_c = [];
      flags = [];
-     includes = []
+     includes = [("lib_test", ["lib"])]
   }
   ;;
 
