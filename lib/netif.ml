@@ -110,19 +110,6 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
   let set_last_read t last_read =
     { t with last_read = last_read; }
 
-  (* merge bufs into one big cstruct. *)
-  let combine_cstructs l =
-    match l with
-    | hd :: [] -> hd
-    | _ ->
-      let consolidated = Cstruct.create (Cstruct.lenv l) in
-      let fill seek buf =
-        Cstruct.blit buf 0 consolidated seek (Cstruct.len buf);
-        seek + (Cstruct.len buf)
-      in
-      ignore (List.fold_left fill 0 l);
-      consolidated
-
   let rec listen t cb =
     let open Lwt in
     let read_wrapper (i : id) seek how_many =
