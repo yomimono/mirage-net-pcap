@@ -85,6 +85,7 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
       | [] -> Lwt.return (`Error (`Unknown "empty file"))
       | hd :: _ ->
         (* hopefully we have a pcap header in bufs *)
+        try
         match Pcap.detect hd with
         | None -> Lwt.return (`Error (`Unknown "file could not be parsed"))
         | Some reader ->
@@ -96,6 +97,8 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
               reader;
               written = ref [];
             })
+        with
+        | Invalid_argument s -> Lwt.return (`Error (`Unknown s))
 
   let disconnect t =
     Lwt.return_unit
@@ -115,9 +118,13 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
     let read_wrapper (i : id) seek how_many =
       K.read i.source i.file seek how_many >>= function
       | `Ok [] -> Lwt.return None
-      | `Ok (buf :: []) -> Lwt.return (Some (Cstruct.sub buf 0 how_many))
-      | `Ok bufs -> Lwt.return (Some (combine_cstructs bufs))
-      | `Error _ -> raise (Invalid_argument "Read failed")
+      | `Ok (buf :: []) when (Cstruct.len buf > how_many) ->
+        Lwt.return (Some (Cstruct.sub buf 0 how_many))
+      | `Ok (buf :: []) when (Cstruct.len buf < how_many) ->
+        (* if there isn't enough data, terminate *)
+        Lwt.return None
+      | `Ok bufs -> Lwt.return (Some (Cstruct.concat bufs))
+      | `Error _ -> Lwt.return None
     in
     let next_packet t =
       read_wrapper t.source t.seek Pcap.sizeof_pcap_packet >>=
@@ -153,11 +160,14 @@ module Make (K: V1_LWT.KV_RO) (T: V1_LWT.TIME) = struct
           let t = advance_seek t (packet_size) in
           return (Some (t, delay, packet_body))
     in
+    try
     next_packet t >>= function
     | None -> Lwt.return_unit
     | Some (next_t, delay, packet) ->
       T.sleep delay >>= fun () ->
       cb packet >>= fun () ->
       listen next_t cb
+    with
+      | Invalid_argument _ -> Lwt.return_unit
 
 end
